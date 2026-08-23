@@ -1,23 +1,26 @@
 // Grid-native structural evolution prototype.
 // Isolated from optimizeHybrid: operator-level validation only.
 (function installStructuralEvolutionPrototype(){
-  const VERSION='grid-native-structure-v0.2-shift-insert';
+  const VERSION='grid-native-structure-v0.3-local-repack';
   const cfg={
     minReachable:6,
     requiredFunctions:['sensor','orientation','movement','weapon'],
     retryLimit:5,
     mutationProbability:.80,
     crossoverProbability:.20,
-    localRedirectDepth:3,
+    localRepackMaxNodes:6,
+    localRepackRadius:3,
+    localRepackLayouts:1800,
+    disabledOperators:['redirectEdge'],
     operatorWeights:{
       replaceAction:.18,
       replaceCondition:.14,
-      insertActionShift:.15,
-      insertConditionBranch:.18,
+      insertActionRepack:.15,
+      insertConditionBranch:.20,
       extendBranch:.10,
-      redirectEdge:.05,
-      shrinkBranch:.08,
-      weaponMutation:.12
+      removeActionRepack:.10,
+      collapseCondition:.05,
+      weaponMutation:.08
     }
   };
 
@@ -43,107 +46,73 @@
   const weaponTypes=new Set(actionGroups.attack);
 
   function clone(p){return cloneProgram(p);}
-  function dirBetween(a,b){
-    const ax=a%6,ay=Math.floor(a/6),bx=b%6,by=Math.floor(b/6);
-    if(ax===bx&&by===ay-1)return'U';if(ax===bx&&by===ay+1)return'D';
-    if(ay===by&&bx===ax-1)return'L';if(ay===by&&bx===ax+1)return'R';return null;
-  }
-  function stepIndex(i,d){const j=nextCell(i,d);return j===i?null:j;}
-  function occupiedNeighbors(p,i){const out=[];for(const [d] of dirs){const j=nextCell(i,d);if(j!==i&&j>0&&p[j])out.push({dir:d,index:j});}return out;}
+  function coord(i){return{x:i%6,y:Math.floor(i/6)};}
+  function manhattan(a,b){const A=coord(a),B=coord(b);return Math.abs(A.x-B.x)+Math.abs(A.y-B.y);}
+  function adjacent(a,b){return a!==b&&manhattan(a,b)===1;}
+  function dirBetween(a,b){const A=coord(a),B=coord(b);if(A.x===B.x&&B.y===A.y-1)return'U';if(A.x===B.x&&B.y===A.y+1)return'D';if(A.y===B.y&&B.x===A.x-1)return'L';if(A.y===B.y&&B.x===A.x+1)return'R';return null;}
   function emptyNeighbors(p,i){const out=[];for(const [d] of dirs){const j=nextCell(i,d);if(j!==i&&j>0&&!p[j])out.push({dir:d,index:j});}return out;}
-  function reachable(p){
-    const seen=new Set([0]),q=[0];
-    while(q.length){
-      const i=q.shift(),c=i===0?{kind:'action',next:'R'}:p[i];if(!c)continue;
-      const ns=c.kind==='action'?[nextCell(i,c.next)]:[nextCell(i,c.yes),nextCell(i,c.no)];
-      for(const j of ns){if(j===0){seen.add(0);continue;}if(j>0&&j<36&&j!==i&&p[j]&&!seen.has(j)){seen.add(j);q.push(j);}}
-    }
-    return seen;
-  }
+  function reachable(p){const seen=new Set([0]),q=[0];while(q.length){const i=q.shift(),c=i===0?{kind:'action',next:'R'}:p[i];if(!c)continue;const ns=c.kind==='action'?[nextCell(i,c.next)]:[nextCell(i,c.yes),nextCell(i,c.no)];for(const j of ns){if(j===0){seen.add(0);continue;}if(j>0&&j<36&&j!==i&&p[j]&&!seen.has(j)){seen.add(j);q.push(j);}}}return seen;}
   function incoming(p,target){const out=[];for(let i=1;i<36;i++){const c=p[i];if(!c)continue;for(const f of c.kind==='action'?['next']:['yes','no'])if(nextCell(i,c[f])===target)out.push({index:i,field:f});}if(target===1)out.push({index:0,field:'next'});return out;}
+  function edgeRecords(p){const out=[];for(let i=1;i<36;i++){const c=p[i];if(!c)continue;for(const f of c.kind==='action'?['next']:['yes','no'])out.push({from:i,field:f,to:nextCell(i,c[f])});}return out;}
+  function undirectedGraph(p){const g=new Map();const add=(a,b)=>{if(a<=0||b<=0||a===b||!p[a]||!p[b])return;if(!g.has(a))g.set(a,new Set());if(!g.has(b))g.set(b,new Set());g.get(a).add(b);g.get(b).add(a);};for(const e of edgeRecords(p))add(e.from,e.to);return g;}
   function pruneUnreachable(p){const n=clone(p),r=reachable(n);for(let i=1;i<36;i++)if(n[i]&&!r.has(i))n[i]=null;return n;}
   function chipCount(p){let n=0;for(let i=1;i<36;i++)if(p[i])n++;return n;}
-  function structureHealth(p){
-    const r=reachable(p),ids=[...r].filter(i=>i>0&&p[i]),types=ids.map(i=>p[i].type),broken=[];
-    for(const i of ids){const c=p[i];for(const f of c.kind==='action'?['next']:['yes','no']){const j=nextCell(i,c[f]);if(j===i||(j!==0&&!p[j]))broken.push({index:i,field:f});}}
-    const functions={sensor:types.some(t=>sensorTypes.has(t)),orientation:types.some(t=>orientationTypes.has(t)),movement:types.some(t=>movementTypes.has(t)),weapon:types.some(t=>weaponTypes.has(t))};
-    const limit=typeof cpuChipLimit==='function'?cpuChipLimit():18;
-    const valid=ids.length>=cfg.minReachable&&cfg.requiredFunctions.every(k=>functions[k])&&broken.length===0&&chipCount(p)<=limit;
-    return{valid,reachable:ids.length,filled:chipCount(p),limit,functions,broken:broken.length};
-  }
+  function structureHealth(p){const r=reachable(p),ids=[...r].filter(i=>i>0&&p[i]),types=ids.map(i=>p[i].type),broken=[];for(const i of ids){const c=p[i];for(const f of c.kind==='action'?['next']:['yes','no']){const j=nextCell(i,c[f]);if(j===i||(j!==0&&!p[j]))broken.push({index:i,field:f});}}const functions={sensor:types.some(t=>sensorTypes.has(t)),orientation:types.some(t=>orientationTypes.has(t)),movement:types.some(t=>movementTypes.has(t)),weapon:types.some(t=>weaponTypes.has(t))};const limit=typeof cpuChipLimit==='function'?cpuChipLimit():18;const valid=ids.length>=cfg.minReachable&&cfg.requiredFunctions.every(k=>functions[k])&&broken.length===0&&chipCount(p)<=limit;return{valid,reachable:ids.length,filled:chipCount(p),limit,functions,broken:broken.length};}
   function actionGroup(type){for(const v of Object.values(actionGroups))if(v.includes(type))return v;return null;}
   function conditionGroup(type){for(const v of Object.values(conditionGroups))if(v.includes(type))return v;return null;}
   function pick(a,rng=Math.random){return a.length?a[Math.floor(rng()*a.length)]:null;}
+  function shuffled(a,rng=Math.random){const n=a.slice();for(let i=n.length-1;i>0;i--){const j=Math.floor(rng()*(i+1));[n[i],n[j]]=[n[j],n[i]];}return n;}
   function randomGrowAction(rng=Math.random){return pick([...actionGroups.translation,...actionGroups.evasion,...actionGroups.orientation,...actionGroups.attack].filter(t=>chipTypes.some(z=>z[0]===t)),rng);}
 
-  function replaceAction(p,rng=Math.random){const n=clone(p),r=[...reachable(n)].filter(i=>i>0&&n[i]?.kind==='action'),i=pick(r,rng);if(i==null)return null;const group=actionGroup(n[i].type);if(!group||group.length<2)return null;const type=pick(group.filter(x=>x!==n[i].type&&chipTypes.some(z=>z[0]===x)),rng);if(!type)return null;n[i]={...n[i],type};return{program:n,detail:{index:i,type}};}
-  function replaceCondition(p,rng=Math.random){const n=clone(p),r=[...reachable(n)].filter(i=>i>0&&n[i]?.kind==='cond'),i=pick(r,rng);if(i==null)return null;const group=conditionGroup(n[i].type);if(!group||group.length<2)return null;const type=pick(group.filter(x=>x!==n[i].type&&chipTypes.some(z=>z[0]===x)),rng);if(!type)return null;n[i]={...n[i],type};return{program:n,detail:{index:i,type}};}
+  function replaceAction(p,rng=Math.random){const n=clone(p),ids=[...reachable(n)].filter(i=>i>0&&n[i]?.kind==='action'),i=pick(ids,rng);if(i==null)return null;const group=actionGroup(n[i].type);if(!group||group.length<2)return null;const type=pick(group.filter(x=>x!==n[i].type&&chipTypes.some(z=>z[0]===x)),rng);if(!type)return null;n[i]={...n[i],type};return{program:n,detail:{index:i,type}};}
+  function replaceCondition(p,rng=Math.random){const n=clone(p),ids=[...reachable(n)].filter(i=>i>0&&n[i]?.kind==='cond'),i=pick(ids,rng);if(i==null)return null;const group=conditionGroup(n[i].type);if(!group||group.length<2)return null;const type=pick(group.filter(x=>x!==n[i].type&&chipTypes.some(z=>z[0]===x)),rng);if(!type)return null;n[i]={...n[i],type};return{program:n,detail:{index:i,type}};}
 
-  // One-chip insertion with relocation. For a selected edge A->B, push the contiguous
-  // occupied run beginning at B one cell farther in the same direction. This creates
-  // one empty cell at old B. The move is accepted only when every pre-existing edge
-  // (except the selected A->B edge) can be represented after relocation, so no hidden
-  // semantic repair is performed.
-  function insertActionShift(p,rng=Math.random,forcedAction=null){
-    if(chipCount(p)>=((typeof cpuChipLimit==='function'?cpuChipLimit():18)))return null;
-    const candidates=[];
-    for(const a of [...reachable(p)]){
-      if(a<=0||!p[a])continue;
-      const c=p[a],fields=c.kind==='action'?['next']:['yes','no'];
-      for(const field of fields){const d=c[field],b=nextCell(a,d);if(b>0&&b<36&&b!==a&&p[b])candidates.push({a,field,d,b});}
-    }
-    for(let attempt=0;attempt<Math.min(24,candidates.length*2);attempt++){
-      const e=pick(candidates,rng);if(!e)return null;
-      const run=[];let x=e.b,guard=0;
-      while(x!=null&&x>0&&x<36&&p[x]&&guard++<6){run.push(x);x=stepIndex(x,e.d);}
-      if(x==null||x<=0||x>=36||p[x]||!run.length)continue;
-      const map=new Map();let ok=true;
-      for(let k=run.length-1;k>=0;k--){const to=stepIndex(run[k],e.d);if(to==null||to<=0){ok=false;break;}map.set(run[k],to);}if(!ok)continue;
-      const moved=new Set(run),n=Array(36).fill(null);
-      for(let i=1;i<36;i++)if(p[i]){const to=map.get(i)??i;if(n[to]){ok=false;break;}n[to]={...p[i]};}if(!ok)continue;
-      const inserted=e.b;if(n[inserted])continue;
-      const type=forcedAction||randomGrowAction(rng);if(!type)continue;
-      n[inserted]={type,kind:'action',next:e.d};
-      // Re-encode every old edge under the relocation map. The selected A->B edge now
-      // intentionally targets the inserted node at old B.
-      for(let oldI=1;oldI<36&&ok;oldI++){
-        const oldC=p[oldI];if(!oldC)continue;const newI=map.get(oldI)??oldI,newC=n[newI];
-        for(const f of oldC.kind==='action'?['next']:['yes','no']){
-          if(oldI===e.a&&f===e.field){const nd=dirBetween(newI,inserted);if(!nd){ok=false;break;}newC[f]=nd;continue;}
-          const oldDest=nextCell(oldI,oldC[f]);
-          if(oldDest===0){const nd=dirBetween(newI,0);if(!nd){ok=false;break;}newC[f]=nd;continue;}
-          const newDest=map.get(oldDest)??oldDest,nd=dirBetween(newI,newDest);if(!nd){ok=false;break;}newC[f]=nd;
-        }
-      }
-      if(!ok)continue;
-      const h=structureHealth(n);if(!h.valid)continue;
-      return{program:n,detail:{edgeFrom:e.a,field:e.field,oldTarget:e.b,inserted,type,shiftDirection:e.d,shifted:run.slice(),shiftCount:run.length}};
-    }
+  function movableSets(p,anchor,fixed,rng=Math.random){const graph=undirectedGraph(p),blocked=new Set([1,...fixed]),sets=[],seenSig=new Set();for(let trial=0;trial<18;trial++){const s=new Set([anchor]);if(blocked.has(anchor))continue;let frontier=[...(graph.get(anchor)||[])].filter(x=>!blocked.has(x));const target=1+Math.floor(rng()*cfg.localRepackMaxNodes);while(s.size<target&&frontier.length){const x=pick(frontier,rng);frontier=frontier.filter(v=>v!==x);if(s.has(x)||blocked.has(x))continue;s.add(x);for(const y of graph.get(x)||[])if(!s.has(y)&&!blocked.has(y)&&!frontier.includes(y))frontier.push(y);}const sig=[...s].sort((a,b)=>a-b).join(',');if(!seenSig.has(sig)){seenSig.add(sig);sets.push(s);}}sets.sort((a,b)=>a.size-b.size);return sets;}
+
+  function solveLocalLayout(p,movable,removed,extraNodes,oldEdges,extraEdges,rng=Math.random){
+    const removedSet=new Set(removed||[]),movableSet=new Set(movable||[]),extraNames=Object.keys(extraNodes||{}),entities=[...movableSet,...extraNames];
+    const fixedOccupied=new Set();for(let i=1;i<36;i++)if(p[i]&&!movableSet.has(i)&&!removedSet.has(i))fixedOccupied.add(i);
+    const incident=new Map();for(const e of [...oldEdges,...extraEdges]){for(const x of [e.from,e.to]){if(x===0)continue;if(!incident.has(x))incident.set(x,[]);incident.get(x).push(e);}}
+    const origins=[...movableSet],center=origins.length?origins:extraNames.map(()=>1),allowedCells=[];
+    for(let pos=1;pos<36;pos++){if(fixedOccupied.has(pos))continue;if(center.some(o=>manhattan(pos,o)<=cfg.localRepackRadius)||extraNames.length&&extraEdges.some(e=>(e.from===extraNames[0]||e.to===extraNames[0])&&typeof(e.from===extraNames[0]?e.to:e.from)==='number'&&manhattan(pos,e.from===extraNames[0]?e.to:e.from)<=2))allowedCells.push(pos);}
+    const candidates=new Map();
+    for(const ent of entities){let cands=allowedCells.slice(),fixedAdj=[];for(const e of incident.get(ent)||[]){const other=e.from===ent?e.to:e.from;if(typeof other==='number'&&other>=0&&!movableSet.has(other)&&!removedSet.has(other)){if(other===0)cands=cands.filter(x=>x===1);else fixedAdj.push(other);}}if(fixedAdj.length)cands=cands.filter(x=>fixedAdj.every(y=>adjacent(x,y)));if(typeof ent==='number')cands.sort((a,b)=>manhattan(a,ent)-manhattan(b,ent));else cands=shuffled(cands,rng);candidates.set(ent,cands);}
+    const degree=ent=>(incident.get(ent)||[]).length,order=entities.slice().sort((a,b)=>candidates.get(a).length-candidates.get(b).length||degree(b)-degree(a)),assign=new Map(),used=new Set();let layouts=0;
+    function posOf(x){if(assign.has(x))return assign.get(x);if(typeof x==='number'&&!movableSet.has(x)&&!removedSet.has(x))return x;return null;}
+    function consistent(ent,pos){if(used.has(pos))return false;for(const e of incident.get(ent)||[]){const other=e.from===ent?e.to:e.from;if(other===0){if(pos!==1)return false;continue;}const op=posOf(other);if(op!=null&&!adjacent(pos,op))return false;}return true;}
+    function dfs(k){if(layouts++>cfg.localRepackLayouts)return false;if(k>=order.length)return true;const ent=order[k];for(const pos of candidates.get(ent)){if(!consistent(ent,pos))continue;assign.set(ent,pos);used.add(pos);if(dfs(k+1))return true;used.delete(pos);assign.delete(ent);}return false;}
+    return dfs(0)?assign:null;
+  }
+
+  function buildRepackedProgram(p,assign,movable,removed,extraNodes,preservedEdges,extraEdges){const removedSet=new Set(removed||[]),n=Array(36).fill(null),map=x=>assign.has(x)?assign.get(x):x;for(let i=1;i<36;i++){if(!p[i]||removedSet.has(i))continue;const to=map(i);if(to<=0||to>=36||n[to])return null;n[to]={...p[i]};}for(const [name,chip] of Object.entries(extraNodes||{})){const to=assign.get(name);if(to==null||n[to])return null;n[to]={...chip};}for(const e of [...preservedEdges,...extraEdges]){if(e.from===0)continue;const from=map(e.from),to=e.to===0?0:map(e.to),chip=n[from];if(!chip)return null;const d=dirBetween(from,to);if(!d)return null;chip[e.field]=d;}return n;}
+
+  function insertActionRepack(p,rng=Math.random,forcedAction=null){
+    if(chipCount(p)>=(typeof cpuChipLimit==='function'?cpuChipLimit():18))return null;
+    const tries=shuffled(edgeRecords(p).filter(e=>e.from>0&&e.to>0&&p[e.from]&&p[e.to]),rng);
+    for(const selected of tries){for(const s of movableSets(p,selected.to,[selected.from],rng)){const preserved=edgeRecords(p).filter(e=>!(e.from===selected.from&&e.field===selected.field)),extraNodes={'@new':{type:forcedAction||randomGrowAction(rng),kind:'action',next:'R'}};if(!extraNodes['@new'].type)continue;const extraEdges=[{from:selected.from,field:selected.field,to:'@new'},{from:'@new',field:'next',to:selected.to}],assign=solveLocalLayout(p,s,[],extraNodes,preserved,extraEdges,rng);if(!assign)continue;const n=buildRepackedProgram(p,assign,s,[],extraNodes,preserved,extraEdges);if(!n||!structureHealth(n).valid)continue;return{program:n,detail:{edgeFrom:selected.from,field:selected.field,oldTarget:selected.to,inserted:assign.get('@new'),type:extraNodes['@new'].type,repacked:[...s],repackCount:s.size}};}}
     return null;
   }
 
-  function extendBranch(p,rng=Math.random,forcedAction=null){
-    if(chipCount(p)>=((typeof cpuChipLimit==='function'?cpuChipLimit():18)))return null;
-    const n=clone(p),conds=[...reachable(n)].filter(i=>i>0&&n[i]?.kind==='cond'&&emptyNeighbors(n,i).length),i=pick(conds,rng);if(i==null)return null;
-    const empty=pick(emptyNeighbors(n,i),rng),c=n[i],field=rng()<.5?'yes':'no',oldDest=nextCell(i,c[field]);const type=forcedAction||randomGrowAction(rng);if(!type)return null;
-    n[empty.index]={type,kind:'action',next:dirBetween(empty.index,i)||'L'};c[field]=empty.dir;
-    return{program:n,detail:{condition:i,branch:field,added:empty.index,type,oldDest}};
+  function extendBranch(p,rng=Math.random,forcedAction=null){if(chipCount(p)>=(typeof cpuChipLimit==='function'?cpuChipLimit():18))return null;const n=clone(p),conds=[...reachable(n)].filter(i=>i>0&&n[i]?.kind==='cond'&&emptyNeighbors(n,i).length),i=pick(conds,rng);if(i==null)return null;const empty=pick(emptyNeighbors(n,i),rng),c=n[i],field=rng()<.5?'yes':'no',oldDest=nextCell(i,c[field]),type=forcedAction||randomGrowAction(rng);if(!type)return null;n[empty.index]={type,kind:'action',next:dirBetween(empty.index,i)||'L'};c[field]=empty.dir;return{program:n,detail:{condition:i,branch:field,added:empty.index,type,oldDest}};}
+
+  function insertConditionBranch(p,rng=Math.random,forcedCondition=null,forcedAction=null){if(chipCount(p)>=(typeof cpuChipLimit==='function'?cpuChipLimit():18))return null;const n=clone(p),acts=[...reachable(n)].filter(i=>i>0&&n[i]?.kind==='action'&&emptyNeighbors(n,i).length),i=pick(acts,rng);if(i==null)return null;const old={...n[i]},oldDest=nextCell(i,old.next);if(oldDest===i||oldDest<0||oldDest>=36||(!n[oldDest]&&oldDest!==0))return null;const empty=pick(emptyNeighbors(n,i),rng),condCandidates=Object.values(conditionGroups).flat().filter(t=>chipTypes.some(z=>z[0]===t)),condType=forcedCondition||pick(condCandidates,rng),actionType=forcedAction||old.type;if(!condType)return null;n[i]={type:condType,kind:'cond',yes:empty.dir,no:old.next};n[empty.index]={type:actionType,kind:'action',next:dirBetween(empty.index,i)||'L'};return{program:n,detail:{replacedAction:i,condition:condType,branchAction:empty.index,actionType,oldDest}};}
+
+  function removeNodeRepack(p,target,successor,rng=Math.random){
+    if(target<=1||!p[target]||successor<=0||!p[successor])return null;
+    const preds=incoming(p,target).filter(x=>x.index>0);if(!preds.length)return null;const fixed=[...new Set(preds.map(x=>x.index)),target],sets=movableSets(p,successor,fixed,rng);
+    for(const s of sets){const predKeys=new Set(preds.map(x=>x.index+'|'+x.field)),preserved=edgeRecords(p).filter(e=>e.from!==target&&e.to!==target&&!predKeys.has(e.from+'|'+e.field)),extraEdges=preds.map(x=>({from:x.index,field:x.field,to:successor})),assign=solveLocalLayout(p,s,[target],{},preserved,extraEdges,rng);if(!assign)continue;const n=buildRepackedProgram(p,assign,s,[target],{},preserved,extraEdges);if(!n)continue;const q=pruneUnreachable(n),h=structureHealth(q);if(!h.valid)continue;return{program:q,detail:{removed:target,predecessors:preds.map(x=>x.index),successor,repacked:[...s],repackCount:s.size,removedTotal:chipCount(p)-chipCount(q)}};}
+    return null;
   }
 
-  function insertConditionBranch(p,rng=Math.random,forcedCondition=null,forcedAction=null){
-    if(chipCount(p)>=((typeof cpuChipLimit==='function'?cpuChipLimit():18)))return null;
-    const n=clone(p),acts=[...reachable(n)].filter(i=>i>0&&n[i]?.kind==='action'&&emptyNeighbors(n,i).length),i=pick(acts,rng);if(i==null)return null;
-    const old={...n[i]},oldDest=nextCell(i,old.next);if(oldDest===i||oldDest<0||oldDest>=36||(!n[oldDest]&&oldDest!==0))return null;
-    const empty=pick(emptyNeighbors(n,i),rng),condCandidates=Object.values(conditionGroups).flat().filter(t=>chipTypes.some(z=>z[0]===t)),condType=forcedCondition||pick(condCandidates,rng),actionType=forcedAction||old.type;if(!condType)return null;
-    n[i]={type:condType,kind:'cond',yes:empty.dir,no:old.next};n[empty.index]={type:actionType,kind:'action',next:dirBetween(empty.index,i)||'L'};
-    return{program:n,detail:{replacedAction:i,condition:condType,branchAction:empty.index,actionType,oldDest}};
-  }
+  function removeActionRepack(p,rng=Math.random){const ids=shuffled([...reachable(p)].filter(i=>i>1&&p[i]?.kind==='action'),rng);for(const i of ids){const b=nextCell(i,p[i].next);if(b>0&&b<36&&p[b]){const r=removeNodeRepack(p,i,b,rng);if(r)return r;}}return null;}
 
-  function redirectEdge(p,rng=Math.random){const n=clone(p),ids=[...reachable(n)].filter(i=>i>0&&n[i]&&occupiedNeighbors(n,i).length>=2),i=pick(ids,rng);if(i==null)return null;const c=n[i],field=c.kind==='action'?'next':(rng()<.5?'yes':'no'),cur=nextCell(i,c[field]),q=pick(occupiedNeighbors(n,i).filter(x=>x.index!==cur),rng);if(!q)return null;c[field]=q.dir;return{program:n,detail:{index:i,field,to:q.index}};}
-  function shrinkBranch(p,rng=Math.random){const n=clone(p),candidates=[];for(const i of [...reachable(n)]){if(i<=0||n[i]?.kind!=='cond')continue;for(const field of ['yes','no']){const j=nextCell(i,n[i][field]),a=n[j];if(j>0&&a?.kind==='action'&&nextCell(j,a.next)===i&&incoming(n,j).length===1)candidates.push({i,field,j,other:field==='yes'?'no':'yes'});}}const x=pick(candidates,rng);if(!x)return null;n[x.i][x.field]=n[x.i][x.other];n[x.j]=null;return{program:pruneUnreachable(n),detail:{condition:x.i,removed:x.j,branch:x.field}};}
+  // Exact inverse of insertConditionBranch when the added branch is a single action
+  // that returns to the condition. This removes one chip without geometric repair.
+  function collapseCondition(p,rng=Math.random){const candidates=[];for(const i of [...reachable(p)]){if(i<=1||p[i]?.kind!=='cond')continue;for(const field of ['yes','no']){const j=nextCell(i,p[i][field]),a=p[j],other=field==='yes'?'no':'yes',b=nextCell(i,p[i][other]);if(j>0&&a?.kind==='action'&&nextCell(j,a.next)===i&&incoming(p,j).filter(x=>x.index>0).length===1&&b>0&&p[b])candidates.push({i,j,other,b,type:a.type});}}const x=pick(candidates,rng);if(!x)return null;const n=clone(p);n[x.i]={type:x.type,kind:'action',next:n[x.i][x.other]};n[x.j]=null;const q=pruneUnreachable(n),h=structureHealth(q);if(!h.valid)return null;return{program:q,detail:{collapsed:x.i,removed:x.j,kept:x.b,removedTotal:chipCount(p)-chipCount(q)}};}
+
   function weaponMutation(p,rng=Math.random){const n=clone(p),ids=[...reachable(n)].filter(i=>i>0&&weaponTypes.has(n[i]?.type)),i=pick(ids,rng);if(i==null)return null;n[i]={...n[i],type:n[i].type==='weapon1'?'weapon2':'weapon1'};return{program:n,detail:{index:i,type:n[i].type}};}
 
-  const operators={replaceAction,replaceCondition,insertActionShift,insertConditionBranch,extendBranch,redirectEdge,shrinkBranch,weaponMutation};
+  const operators={replaceAction,replaceCondition,insertActionRepack,insertConditionBranch,extendBranch,removeActionRepack,collapseCondition,weaponMutation};
   function weightedOperator(rng=Math.random){let x=rng(),sum=0;for(const [name,w] of Object.entries(cfg.operatorWeights)){sum+=w;if(x<=sum)return name;}return'insertConditionBranch';}
   function mutateStructured(p,rng=Math.random){for(let k=0;k<cfg.retryLimit;k++){const name=weightedOperator(rng),r=operators[name](p,rng);if(!r)continue;const q=pruneUnreachable(r.program),h=structureHealth(q);if(h.valid)return{program:q,operator:name,retries:k,detail:r.detail,health:h};}return{program:clone(p),operator:'parentCopy',retries:cfg.retryLimit,detail:{},health:structureHealth(p)};}
 
@@ -151,13 +120,20 @@
   function crossoverSubgraph(recipient,donor,rng=Math.random){const motifs=extractMotifs(donor);if(!motifs.length)return null;for(let k=0;k<cfg.retryLimit;k++){const m=pick(motifs,rng),r=insertConditionBranch(recipient,rng,m.conditionType,m.actionType);if(!r)continue;const q=pruneUnreachable(r.program),h=structureHealth(q);if(h.valid)return{program:q,operator:'subgraphCrossover',retries:k,detail:{motif:m,...r.detail},health:h};}return null;}
 
   function validSeed(){const candidates=[handDesignedChampion('A'),handDesignedChampion('B'),...(typeof strategicSeeds==='function'?strategicSeeds():[])];for(const p0 of candidates){const p=typeof trimProgramToCpu==='function'?trimProgramToCpu(p0):clone(p0),h=structureHealth(p);if(h.valid)return p;}return typeof trimProgramToCpu==='function'?trimProgramToCpu(handDesignedChampion('A')):handDesignedChampion('A');}
-  function runOperatorTrials(trials=250){const seed=validSeed(),names=Object.keys(operators),rows={};for(const n of names)rows[n]={attempts:0,generated:0,valid:0,chipDelta:0,shifted:0};for(const name of names){for(let t=0;t<trials;t++){rows[name].attempts++;const r=operators[name](seed);if(!r)continue;rows[name].generated++;const q=pruneUnreachable(r.program),h=structureHealth(q);if(h.valid)rows[name].valid++;rows[name].chipDelta+=chipCount(q)-chipCount(seed);rows[name].shifted+=Number(r.detail?.shiftCount||0);}}return{name:'operatorTrials',trials,seedHealth:structureHealth(seed),operators:rows};}
-  function runGrowthShrinkTest(steps=80){let p=validSeed(),max=chipCount(p),min=max,growAccepted=0,shrinkAccepted=0,shiftAccepted=0;const start=max,limit=typeof cpuChipLimit==='function'?cpuChipLimit():18;for(let i=0;i<steps;i++){const grow=i<Math.floor(steps*.6);let r;if(grow){const x=Math.random();r=x<.40?insertActionShift(p):x<.72?insertConditionBranch(p):extendBranch(p);}else r=shrinkBranch(p);if(!r)continue;const q=pruneUnreachable(r.program),h=structureHealth(q);if(!h.valid)continue;p=q;if(grow){growAccepted++;if(r.detail?.shiftCount)shiftAccepted++;}else shrinkAccepted++;max=Math.max(max,chipCount(p));min=Math.min(min,chipCount(p));}return{name:'growthShrink',start,max,min,end:chipCount(p),limit,growAccepted,shrinkAccepted,shiftAccepted,finalHealth:structureHealth(p)};}
-  function runCrossoverTrials(trials=250){const a=validSeed(),rawB=typeof trimProgramToCpu==='function'?trimProgramToCpu(handDesignedChampion('B')):handDesignedChampion('B'),b=structureHealth(rawB).valid?rawB:a;let generated=0,valid=0,mixed=0;for(let i=0;i<trials;i++){const r=crossoverSubgraph(a,b);if(!r)continue;generated++;if(r.health.valid)valid++;if(r.detail?.motif?.conditionType&&r.detail?.motif?.actionType)mixed++;}return{name:'crossoverTrials',trials,donorMotifs:extractMotifs(b).length,generated,valid,mixed};}
-  function runSuite(){const report={version:VERSION,cpuLimit:typeof cpuChipLimit==='function'?cpuChipLimit():18,config:JSON.parse(JSON.stringify(cfg)),operator:runOperatorTrials(200),growth:runGrowthShrinkTest(100),crossover:runCrossoverTrials(200),timestamp:new Date().toISOString()};window.__structuralEvolutionReport=report;return report;}
-  function renderReport(r){const ops=Object.entries(r.operator.operators).map(([k,v])=>`${k}:${v.valid}/${v.attempts}`).join(' / '),g=r.growth,c=r.crossover,shift=r.operator.operators.insertActionShift;const pass=r.operator.seedHealth.valid&&Object.values(r.operator.operators).some(v=>v.valid>0)&&g.finalHealth.valid&&c.valid>0;evoDetail.textContent=`${r.version} ${pass?'PASS':'要確認'} / CPU${r.cpuLimit} / ${ops} / 1チップshift ${shift.valid}/${shift.attempts} / 成長 ${g.start}→max${g.max}→${g.end} / 交叉 ${c.valid}/${c.trials}`;statusEl.textContent=pass?'構造進化エンジン単体試験PASS。局所シフト挿入を含みます。まだ本番探索には接続していません。':'構造進化エンジン単体試験で未成立項目があります。詳細レポートを確認してください。';}
+  function growSeed(target=10){let p=validSeed(),guard=0;while(chipCount(p)<Math.min(target,(typeof cpuChipLimit==='function'?cpuChipLimit():18))&&guard++<80){const r=guard%3===0?insertActionRepack(p):guard%2===0?extendBranch(p):insertConditionBranch(p);if(!r)continue;const q=pruneUnreachable(r.program);if(structureHealth(q).valid)p=q;}return p;}
+  function removeReadySeed(){const base=validSeed();for(let k=0;k<80;k++){const r=insertActionRepack(base);if(!r)continue;const q=pruneUnreachable(r.program);if(structureHealth(q).valid&&removeActionRepack(q))return q;}return growSeed(Math.min(11,(typeof cpuChipLimit==='function'?cpuChipLimit():18)));}
+  function collapseReadySeed(){const base=validSeed();for(let k=0;k<80;k++){const r=insertConditionBranch(base);if(!r)continue;const q=pruneUnreachable(r.program);if(structureHealth(q).valid&&collapseCondition(q))return q;}return growSeed(Math.min(11,(typeof cpuChipLimit==='function'?cpuChipLimit():18)));}
+
+  function runOperatorTrials(trials=200){const seed=validSeed(),grown=growSeed(Math.min(11,(typeof cpuChipLimit==='function'?cpuChipLimit():18))),removeBase=removeReadySeed(),collapseBase=collapseReadySeed(),names=Object.keys(operators),rows={};for(const name of names)rows[name]={attempts:0,generated:0,valid:0,chipDelta:0,repacked:0,testSeed:name==='removeActionRepack'?'removeReady':name==='collapseCondition'?'collapseReady':'base'};for(const name of names){const base=name==='removeActionRepack'?removeBase:name==='collapseCondition'?collapseBase:seed;for(let t=0;t<trials;t++){rows[name].attempts++;const r=operators[name](base);if(!r)continue;rows[name].generated++;const q=pruneUnreachable(r.program),h=structureHealth(q);if(h.valid)rows[name].valid++;rows[name].chipDelta+=chipCount(q)-chipCount(base);rows[name].repacked+=Number(r.detail?.repackCount||0);}}return{name:'operatorTrials',trials,seedHealth:structureHealth(seed),grownSeedHealth:structureHealth(grown),removeSeedHealth:structureHealth(removeBase),collapseSeedHealth:structureHealth(collapseBase),operators:rows};}
+
+  function runGrowthShrinkTest(steps=140){let p=validSeed(),max=chipCount(p),min=max,growAccepted=0,shrinkAccepted=0,repackGrow=0,repackShrink=0;const start=max,limit=typeof cpuChipLimit==='function'?cpuChipLimit():18;for(let i=0;i<steps;i++){const grow=i<Math.floor(steps*.58);let r;if(grow){const x=Math.random();r=x<.38?insertActionRepack(p):x<.72?insertConditionBranch(p):extendBranch(p);}else r=Math.random()<.72?removeActionRepack(p):collapseCondition(p);if(!r)continue;const q=pruneUnreachable(r.program),h=structureHealth(q);if(!h.valid)continue;p=q;if(grow){growAccepted++;if(r.detail?.repackCount)repackGrow++;}else{shrinkAccepted++;if(r.detail?.repackCount)repackShrink++;}max=Math.max(max,chipCount(p));min=Math.min(min,chipCount(p));}return{name:'growthShrink',start,max,min,end:chipCount(p),limit,growAccepted,shrinkAccepted,repackGrow,repackShrink,finalHealth:structureHealth(p)};}
+
+  function runCrossoverTrials(trials=200){const a=validSeed(),rawB=typeof trimProgramToCpu==='function'?trimProgramToCpu(handDesignedChampion('B')):handDesignedChampion('B'),b=structureHealth(rawB).valid?rawB:a;let generated=0,valid=0,mixed=0;for(let i=0;i<trials;i++){const r=crossoverSubgraph(a,b);if(!r)continue;generated++;if(r.health.valid)valid++;if(r.detail?.motif?.conditionType&&r.detail?.motif?.actionType)mixed++;}return{name:'crossoverTrials',trials,donorMotifs:extractMotifs(b).length,generated,valid,mixed};}
+
+  function runSuite(){const report={version:VERSION,cpuLimit:typeof cpuChipLimit==='function'?cpuChipLimit():18,config:JSON.parse(JSON.stringify(cfg)),operator:runOperatorTrials(200),growth:runGrowthShrinkTest(140),crossover:runCrossoverTrials(200),timestamp:new Date().toISOString()};window.__structuralEvolutionReport=report;return report;}
+  function renderReport(r){const ops=Object.entries(r.operator.operators).map(([k,v])=>`${k}:${v.valid}/${v.attempts}`).join(' / '),g=r.growth,c=r.crossover,ins=r.operator.operators.insertActionRepack,rem=r.operator.operators.removeActionRepack,col=r.operator.operators.collapseCondition;const pass=r.operator.seedHealth.valid&&r.operator.grownSeedHealth.valid&&r.operator.removeSeedHealth.valid&&r.operator.collapseSeedHealth.valid&&ins.valid>0&&rem.valid>0&&col.valid>0&&g.max>g.start&&g.shrinkAccepted>0&&g.finalHealth.valid&&c.valid>0;evoDetail.textContent=`${r.version} ${pass?'PASS':'要確認'} / CPU${r.cpuLimit} / ${ops} / repack挿入 ${ins.valid}/${ins.attempts} / repack削除 ${rem.valid}/${rem.attempts} / 条件縮約 ${col.valid}/${col.attempts} / 成長 ${g.start}→max${g.max}→${g.end} / 交叉 ${c.valid}/${c.trials}`;statusEl.textContent=pass?'構造進化v0.3単体試験PASS。局所再配置Grow/Shrinkを確認しました。まだ本番探索には接続していません。':'構造進化v0.3で未成立項目があります。詳細レポートを確認してください。';}
 
   setTimeout(()=>{const section=optimizeBtn?.closest?.('.section');if(!section||root.querySelector('#structureTestBtn'))return;const b=document.createElement('button');b.type='button';b.id='structureTestBtn';b.textContent='構造進化テスト';b.addEventListener('click',()=>{try{const r=runSuite();renderReport(r);console.info('structural evolution report',r);}catch(err){console.error(err);statusEl.textContent='構造進化テストエラー：'+(err?.message||err);}});section.querySelector('.controls')?.appendChild(b);},0);
 
-  window.__structuralEvolution={VERSION,cfg,structureHealth,pruneUnreachable,mutateStructured,crossoverSubgraph,insertActionShift,runSuite};
+  window.__structuralEvolution={VERSION,cfg,structureHealth,pruneUnreachable,mutateStructured,crossoverSubgraph,insertActionRepack,removeActionRepack,collapseCondition,runSuite};
 })();
