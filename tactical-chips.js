@@ -87,7 +87,59 @@ function installTacticalOptimizerRules(){
   simulateBattleWeaponAware=wrapped;
   return true;
 }
+
+function auditInstalledCombatProgram(){
+  if(typeof simulateBattleWeaponAware!=='function')return null;
+  const N=48;
+  let games=0,wins=0,draws=0,losses=0,resolved=0,attacks=0,damage=0,translation=0,orientation=0,nonCombat=0;
+  const a1=weaponA1Sel.value,a2=weaponA2Sel.value,b1=weaponB1Sel.value,b2=weaponB2Sel.value;
+  function add(r,side){
+    if(!r)return;
+    games++;
+    const win=side==='A'?r.winner>0:r.winner<0,loss=side==='A'?r.winner<0:r.winner>0;
+    if(win)wins++;else if(loss)losses++;else draws++;
+    if(r.resolved)resolved++;
+    const ac=r.activity?.[side]||null,st=r.stats?.[side]||{};
+    attacks+=ac?ac.attacks:(st.shoot||0)+(st.mine||0)+(st.killer||0);
+    damage+=ac?ac.damage:(st.damage||0);
+    translation+=ac?ac.translation:(st.move||0)+(st.evade||0);
+    orientation+=ac?ac.orientation:(st.turn||0)+(st.aim||0);
+    if(ac?.nonCombat)nonCombat++;
+  }
+  for(let i=0;i<N;i++){
+    const seed=1880000000+i*23003;
+    add(simulateBattleWeaponAware(programs.A,programs.B,seed,a1,a2,b1,b2),'A');
+    add(simulateBattleWeaponAware(programs.B,programs.A,seed,b1,b2,a1,a2),'B');
+  }
+  if(!games)return null;
+  return{
+    games,wins,draws,losses,
+    winRate:wins/games,resolvedRate:resolved/games,timeoutRate:(games-resolved)/games,
+    attacks:attacks/games,damage:damage/games,translation:translation/games,orientation:orientation/games,
+    nonCombatRate:nonCombat/games
+  };
+}
+
+function installOptimizerCombatAudit(){
+  if(typeof optimizeHybrid!=='function'||optimizeHybrid.__combatAuditWrapped)return false;
+  const baseOptimize=optimizeHybrid;
+  const wrapped=async function(...args){
+    const result=await baseOptimize(...args);
+    const m=auditInstalledCombatProgram();
+    if(m){
+      const pct=x=>(100*x).toFixed(1)+'%';
+      evoDetail.textContent=`${evoDetail.textContent} / 戦闘監査${m.games}戦: 勝率 ${pct(m.winRate)}・決着率 ${pct(m.resolvedRate)}・時間切れ ${pct(m.timeoutRate)}・平均攻撃 ${m.attacks.toFixed(1)}回・平均与ダメ ${m.damage.toFixed(1)}・平均移動/回避 ${m.translation.toFixed(1)}回`;
+      statusEl.textContent=`探索完了。戦闘監査${m.games}戦：勝率 ${pct(m.winRate)}、決着率 ${pct(m.resolvedRate)}、平均攻撃 ${m.attacks.toFixed(1)}回、平均与ダメ ${m.damage.toFixed(1)}。1試合は最大62.4秒で、未決着は時間切れ扱いです。`;
+    }
+    return result;
+  };
+  wrapped.__combatAuditWrapped=true;
+  optimizeHybrid=wrapped;
+  return true;
+}
+
 setTimeout(()=>{
   installTacticalOptimizerRules();
+  installOptimizerCombatAudit();
   renderPalette();renderProgram();
 },0);
