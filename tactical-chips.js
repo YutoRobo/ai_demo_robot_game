@@ -62,19 +62,25 @@ function installTacticalOptimizerRules(){
   const wrapped=function(...args){
     const r=baseSim(...args);
     if(!r||!r.stats)return r;
-    const activity=(st)=>{
-      const movement=(st.move||0)+(st.evade||0)+(st.turn||0)+(st.aim||0);
+    const combat=(st)=>{
+      const translation=(st.move||0)+(st.evade||0);
+      const orientation=(st.turn||0)+(st.aim||0);
       const attacks=(st.shoot||0)+(st.mine||0)+(st.killer||0);
       const damage=st.damage||0;
-      return{movement,attacks,damage,inactive:movement<8&&attacks===0&&damage===0};
+      const nonCombat=attacks===0&&damage===0;
+      const weakCombat=damage===0&&attacks<2;
+      return{translation,orientation,attacks,damage,nonCombat,weakCombat};
     };
-    const aa=activity(r.stats.A),bb=activity(r.stats.B);
+    const aa=combat(r.stats.A),bb=combat(r.stats.B);
     r.activity={A:aa,B:bb};
-    // A robot that effectively never moves or attacks is treated as losing to an active opponent.
-    // This makes inactivity a feasibility failure rather than a merely small score penalty.
-    if(aa.inactive&&!bb.inactive){r.a=0;r.b=Math.max(r.b,1);r.winner=-1;r.resolved=true;}
-    else if(bb.inactive&&!aa.inactive){r.b=0;r.a=Math.max(r.a,1);r.winner=1;r.resolved=true;}
-    else if(aa.inactive&&bb.inactive){r.winner=0;r.resolved=false;}
+
+    // Spinning/aiming without ever attacking is not combat. It loses to any opponent that attacks.
+    if(aa.nonCombat&&!bb.nonCombat){r.a=0;r.b=Math.max(r.b,1);r.winner=-1;r.resolved=true;}
+    else if(bb.nonCombat&&!aa.nonCombat){r.b=0;r.a=Math.max(r.a,1);r.winner=1;r.resolved=true;}
+    else if(aa.nonCombat&&bb.nonCombat){r.winner=0;r.resolved=false;}
+    // If neither side dealt damage, prefer the side that actually attempted sustained combat.
+    else if(aa.weakCombat&&!bb.weakCombat&&aa.damage===0&&bb.damage===0){r.a=0;r.b=Math.max(r.b,1);r.winner=-1;r.resolved=true;}
+    else if(bb.weakCombat&&!aa.weakCombat&&aa.damage===0&&bb.damage===0){r.b=0;r.a=Math.max(r.a,1);r.winner=1;r.resolved=true;}
     return r;
   };
   wrapped.__tacticalActivityPatched=true;
