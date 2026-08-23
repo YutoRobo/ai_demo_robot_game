@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>構造進化エンジン単体試験</title>
+<style>
+body{margin:0;background:#111317;color:#f1f3f5;font-family:system-ui,sans-serif}main{max-width:1050px;margin:auto;padding:18px}.panel{background:#1b1e24;border:1px solid #353a43;border-radius:14px;padding:14px;margin:12px 0}.controls{display:flex;gap:8px;flex-wrap:wrap;align-items:center}button,select{font:inherit;border-radius:9px;border:1px solid #4a515d;background:#272c34;color:#fff;padding:8px 12px;min-height:40px}.grid{display:grid;grid-template-columns:repeat(6,1fr);gap:4px;max-width:430px;aspect-ratio:1;margin-top:10px}.cell{display:flex;align-items:center;justify-content:center;text-align:center;border:1px solid #424954;border-radius:7px;background:#252a31;font-size:11px;padding:2px}.start{background:#2e6f50}.cond{background:#805d24}.action{background:#345f8a}pre{white-space:pre-wrap;word-break:break-word;background:#0e1013;padding:12px;border-radius:10px;max-height:50vh;overflow:auto}.ok{color:#8ee39b}.warn{color:#ffd166}.mini{font-size:12px;opacity:.75}</style>
+</head>
+<body>
+<main id="testRoot">
+<h1 style="font-size:20px">構造進化エンジン単体試験</h1>
+<p class="mini">本番の300個体探索とは切り離されています。突然変異・成長/縮約・サブグラフ交叉の成立性だけを検証します。</p>
+<div class="panel section">
+  <div class="controls">
+    <button id="optimizeBtn" type="button">テスト実行</button>
+    <label>CPU <select id="cpu"><option value="12">Compact 12</option><option value="18" selected>Standard 18</option><option value="24">Advanced 24</option></select></label>
+    <a href="./" style="color:#9ecbff">ゲームへ戻る</a>
+  </div>
+  <div id="status" style="margin-top:10px">「テスト実行」を押してください。</div>
+  <div id="evoDetail" class="mini" style="margin-top:8px"></div>
+</div>
+<div class="panel"><strong>基準個体</strong><div id="seedGrid" class="grid"></div></div>
+<div class="panel"><strong>詳細レポート</strong><pre id="report">未実行</pre></div>
+</main>
+<script>
+const root=document.getElementById('testRoot'),optimizeBtn=document.getElementById('optimizeBtn'),statusEl=document.getElementById('status'),evoDetail=document.getElementById('evoDetail');
+const dirs=[['U','↑'],['R','→'],['D','↓'],['L','←']];
+const chipTypes=[
+ ['forward','前進','action'],['back','後退','action'],['turnL','左旋回','action'],['turnR','右旋回','action'],['strafeL','左移動','action'],['strafeR','右移動','action'],['aim','照準','action'],['evade','回避','action'],['weapon1','武器1','action'],['weapon2','武器2','action'],['flagOn','フラグON','action'],['flagOff','フラグOFF','action'],['timerStart','タイマー','action'],['wait','待機','action'],
+ ['enemyFront','正面','cond'],['enemyNear','近い','cond'],['enemyFar','遠い','cond'],['enemyLeft','敵左','cond'],['enemyRight','敵右','cond'],['enemyInNarrowFov','狭視野','cond'],['enemyInMediumFov','中視野','cond'],['enemyInWideFov','広視野','cond'],['bulletNear','弾接近','cond'],['bulletLeft','弾左','cond'],['bulletRight','弾右','cond'],['hpLow','HP低下','cond'],['hitRecent','被弾直後','cond'],['lostEnemy','見失い','cond'],['flagSet','フラグON?','cond'],['timer2s','2秒経過','cond'],['wallNear','壁接近','cond'],['canShoot','射撃可','cond'],
+ ['enemyFacingMe','敵が自機向き','cond'],['behindEnemy','敵背後','cond'],['enemyWithin100','100以内','cond'],['enemyWithin200','200以内','cond'],['enemyWithin300','300以内','cond'],['weapon1Ammo','武器1残弾','cond'],['weapon2Ammo','武器2残弾','cond']
+];
+function nextCell(index,dir){const x=index%6,y=Math.floor(index/6);if(dir==='U'&&y>0)return index-6;if(dir==='D'&&y<5)return index+6;if(dir==='L'&&x>0)return index-1;if(dir==='R'&&x<5)return index+1;return index;}
+function cloneProgram(p){return p.map(c=>c?{...c}:null)}
+function cpuChipLimit(){return Number(document.getElementById('cpu').value)||18;}
+function seedA(){const p=Array(36).fill(null);p[1]={type:'enemyInWideFov',kind:'cond',yes:'D',no:'R'};p[2]={type:'turnR',kind:'action',next:'L'};p[7]={type:'aim',kind:'action',next:'R'};p[8]={type:'canShoot',kind:'cond',yes:'D',no:'L'};p[13]={type:'forward',kind:'action',next:'U'};p[14]={type:'weapon1',kind:'action',next:'L'};return p;}
+function seedB(){const p=Array(36).fill(null);p[1]={type:'enemyInWideFov',kind:'cond',yes:'D',no:'R'};p[2]={type:'turnL',kind:'action',next:'L'};p[7]={type:'bulletNear',kind:'cond',yes:'R',no:'D'};p[8]={type:'evade',kind:'action',next:'L'};p[13]={type:'aim',kind:'action',next:'R'};p[14]={type:'canShoot',kind:'cond',yes:'R',no:'U'};p[15]={type:'weapon1',kind:'action',next:'L'};return p;}
+function handDesignedChampion(side){return side==='B'?seedB():seedA();}
+function strategicSeeds(){return[seedA(),seedB()];}
+function trimProgramToCpu(p){const n=cloneProgram(p),limit=cpuChipLimit(),keep=[];for(let i=1;i<36;i++)if(n[i])keep.push(i);for(const i of keep.slice(limit))n[i]=null;return n;}
+function renderSeed(){const p=seedA(),g=document.getElementById('seedGrid');g.innerHTML='';for(let i=0;i<36;i++){const d=document.createElement('div');d.className='cell';if(i===0){d.classList.add('start');d.textContent='START →';}else if(p[i]){d.classList.add(p[i].kind);const label=chipTypes.find(x=>x[0]===p[i].type)?.[1]||p[i].type;d.textContent=p[i].kind==='cond'?`${label}\nY:${p[i].yes} N:${p[i].no}`:`${label} ${p[i].next}`;}g.appendChild(d);}}
+renderSeed();
+</script>
+<script src="./structural-evolution.js?v=20260824-struct01"></script>
+<script>
+optimizeBtn.addEventListener('click',()=>{try{const r=window.__structuralEvolution.runSuite();document.getElementById('report').textContent=JSON.stringify(r,null,2);}catch(err){statusEl.textContent='テストエラー: '+(err?.message||err);console.error(err);}});
+</script>
+</body>
+</html>
