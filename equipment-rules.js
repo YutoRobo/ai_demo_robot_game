@@ -19,3 +19,4 @@ for(const sel of [weaponA1Sel,weaponA2Sel,weaponB1Sel,weaponB2Sel])sel.addEventL
 if(typeof chassisASel!=='undefined'&&chassisASel)chassisASel.addEventListener('change',updateEquipmentInfo);
 if(typeof chassisBSel!=='undefined'&&chassisBSel)chassisBSel.addEventListener('change',updateEquipmentInfo);
 setTimeout(updateEquipmentInfo,0);
+fetch('./team-mode.js?v=20260823-2124',{cache:'no-store'}).then(r=>{if(!r.ok)throw new Error('team-mode.js '+r.status);return r.text();}).then(code=>eval(code)).catch(err=>console.error('team mode load failed',err));
