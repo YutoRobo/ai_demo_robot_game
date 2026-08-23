@@ -80,9 +80,10 @@
     }catch(_e){}
   }
   setTimeout(()=>{
-    const section=optimizeBtn?.closest?.('.section');if(!section||root.querySelector('#simDiagBtn'))return;
-    const btn=document.createElement('button');btn.type='button';btn.id='simDiagBtn';btn.textContent='シミュレータ診断';
+    const section=optimizeBtn?.closest?.('.section');if(!section)return;
+    let btn=root.querySelector('#simDiagBtn');
+    if(btn){const fresh=btn.cloneNode(true);btn.replaceWith(fresh);btn=fresh;}
+    else{btn=document.createElement('button');btn.type='button';btn.id='simDiagBtn';btn.textContent='シミュレータ診断';section.querySelector('.controls')?.appendChild(btn);}
     btn.addEventListener('click',()=>{try{const report=makeReport();window.__robotSimulatorDiagnostic=report;renderReport(report);downloadReport(report);}catch(err){console.error(err);statusEl.textContent='シミュレータ診断エラー：'+(err?.message||err);}});
-    section.querySelector('.controls')?.appendChild(btn);
   },0);
 })();
