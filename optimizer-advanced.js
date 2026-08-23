@@ -1,5 +1,36 @@
 // Advanced optimizer loaded by index.html with direct eval inside the game closure.
 // It intentionally relies on the game-core lexical helpers/variables.
+const OPTIMIZER_STORAGE_KEY='robot-ai-battle-v1-optimized';
+function saveOptimizedResult(meta={}){
+  try{
+    const payload={
+      version:1,
+      savedAt:new Date().toISOString(),
+      programs:{A:cloneProgram(programs.A),B:cloneProgram(programs.B)},
+      weapons:{A1:weaponA1Sel.value,A2:weaponA2Sel.value,B1:weaponB1Sel.value,B2:weaponB2Sel.value},
+      metrics:{gen:evoGen.textContent,battles:evoBattles.textContent,best:evoBest.textContent,detail:evoDetail.textContent},
+      ...meta
+    };
+    localStorage.setItem(OPTIMIZER_STORAGE_KEY,JSON.stringify(payload));
+    lastOptimized={A:cloneProgram(programs.A),B:cloneProgram(programs.B)};
+    return true;
+  }catch(err){console.warn('optimized result save failed',err);return false;}
+}
+function restoreOptimizedResult(){
+  try{
+    const raw=localStorage.getItem(OPTIMIZER_STORAGE_KEY);if(!raw)return false;
+    const saved=JSON.parse(raw);if(!saved||saved.version!==1||!saved.programs?.A||!saved.programs?.B)return false;
+    programs.A=cloneProgram(saved.programs.A);programs.B=cloneProgram(saved.programs.B);
+    if(saved.weapons){weaponA1Sel.value=saved.weapons.A1||weaponA1Sel.value;weaponA2Sel.value=saved.weapons.A2||weaponA2Sel.value;weaponB1Sel.value=saved.weapons.B1||weaponB1Sel.value;weaponB2Sel.value=saved.weapons.B2||weaponB2Sel.value;}
+    lastOptimized={A:cloneProgram(programs.A),B:cloneProgram(programs.B)};editSide='A';selectedCell=1;
+    state={A:{pc:0,acc:0,flag:false,timer:0,lastSeen:0,lastHp:100,hitRecent:0,lockTime:0},B:{pc:0,acc:0,flag:false,timer:0,lastSeen:0,lastHp:100,hitRecent:0,lockTime:0}};
+    if(saved.metrics){evoGen.textContent=saved.metrics.gen||'-';evoBattles.textContent=saved.metrics.battles||'0';evoBest.textContent=saved.metrics.best||'-';evoDetail.textContent=(saved.metrics.detail||'保存済み探索結果')+' / 保存済み';evoProgress.style.width='100%';}
+    renderProgram();
+    const when=saved.savedAt?new Date(saved.savedAt).toLocaleString():'前回';
+    statusEl.textContent=`保存済みの最適化結果を復元しました（${when}）。そのまま戦闘できます。`;
+    return true;
+  }catch(err){console.warn('optimized result restore failed',err);return false;}
+}
 optimizeHybrid = async function(maxGenerations=1000){
   running=false;startBtn.textContent='戦闘開始';optimizeBtn.disabled=true;
   statusEl.textContent='高度進化探索：Train / Validation / Baseline / Test 分離で探索中…';
@@ -92,7 +123,6 @@ optimizeHybrid = async function(maxGenerations=1000){
       }else if(x<.84&&reach.length>7){
         const pos=reach[Math.floor(Math.random()*reach.length)];if(pos!==1)p[pos]=null;
       }else{
-        // tactical mini-module mutation around a reachable anchor
         const anchor=reach.length?reach[Math.floor(Math.random()*reach.length)]:1;
         const ax=anchor%6,ay=Math.floor(anchor/6);
         const module=[
@@ -164,7 +194,6 @@ optimizeHybrid = async function(maxGenerations=1000){
     }
     const elites=population.slice().sort((a,b)=>b.score-a.score).slice(0,ELITE);
     const merged=[...elites,...offspring];
-    // Re-evaluate merged candidates on identical conditions to avoid seed luck.
     population=merged.map(e=>({v:e.v,...scoreAgainst(e.v,opponentPool,genSeeds)})).sort((a,b)=>b.score-a.score).slice(0,POP);
     if(population[0].score>bestTrain.score){bestTrain=population[0];hall.push(bestTrain.v);if(hall.length>32)hall.shift();}
     for(const e of population.slice(0,8))putArchive(e);
@@ -190,6 +219,8 @@ optimizeHybrid = async function(maxGenerations=1000){
   editSide='A';selectedCell=1;state={A:{pc:0,acc:0,flag:false,timer:0,lastSeen:0,lastHp:100,hitRecent:0,lockTime:0},B:{pc:0,acc:0,flag:false,timer:0,lastSeen:0,lastHp:100,hitRecent:0,lockTime:0}};
   renderProgram();evoGen.textContent=`${ITER} + Test`;evoBattles.textContent=String(battleCount);evoBest.textContent=rf[0]?rf[0].score.toFixed(1):bestValidated.combined.toFixed(1);evoProgress.style.width='100%';
   evoDetail.textContent=`完了：Train ${(bestTrain.wr*100).toFixed(1)}% / Validation ${(bestValidated.val.wr*100).toFixed(1)}% / Baseline ${(bestValidated.base.wr*100).toFixed(1)}% / Test ${rf[0]?(rf[0].wr*100).toFixed(1):'-'}% / Archive ${archive.size}`;
-  statusEl.textContent='高度探索完了。交叉・戦術アーカイブ・殿堂・未知条件評価を使って再選抜しました。';
+  const saved=saveOptimizedResult({maxGenerations:ITER,testWinRate:rf[0]?.wr??null});
+  statusEl.textContent=saved?'高度探索完了。最適化結果をこのブラウザに保存しました。次回起動時に自動復元します。':'高度探索完了。結果は生成できましたが、ブラウザへの保存には失敗しました。';
   optimizeBtn.disabled=false;
 };
+setTimeout(()=>restoreOptimizedResult(),0);
