@@ -43,6 +43,7 @@ optimizeHybrid=async function(maxGenerations=1000){
   }
 
   const candidate=normalizeCandidate(programs.A,weaponA1Sel.value,weaponA2Sel.value);
+  const candidateB=normalizeCandidate(programs.B,weaponB1Sel.value,weaponB2Sel.value);
   const candGate=gateScore(candidate);
   let prevGate=null;
   if(previous?.programs?.A){
@@ -57,20 +58,19 @@ optimizeHybrid=async function(maxGenerations=1000){
     });
     evoDetail.textContent+=` / Champion Gate ${(candGate.wr*100).toFixed(1)}% 採用`;
     statusEl.textContent=prevGate
-      ?`高度探索完了。固定Champion Gateで前回王者を上回ったため、新Championを保存しました（${(prevGate.wr*100).toFixed(1)}% → ${(candGate.wr*100).toFixed(1)}%）。`
-      :`高度探索完了。固定Champion Gateで初代Championとして保存しました（勝率 ${(candGate.wr*100).toFixed(1)}%）。`;
+      ?`高度探索完了。探索結果を盤面へ反映し、固定Champion Gateで前回王者を上回ったため新Championとして保存しました（${(prevGate.wr*100).toFixed(1)}% → ${(candGate.wr*100).toFixed(1)}%）。`
+      :`高度探索完了。探索結果を盤面へ反映し、初代Championとして保存しました（勝率 ${(candGate.wr*100).toFixed(1)}%）。`;
   }else{
-    programs.A=cloneProgram(previous.programs.A);programs.B=cloneProgram(previous.programs.B);
-    if(previous.weapons){
-      weaponA1Sel.value=previous.weapons.A1||weaponA1Sel.value;weaponA2Sel.value=previous.weapons.A2||weaponA2Sel.value;
-      weaponB1Sel.value=previous.weapons.B1||weaponB1Sel.value;weaponB2Sel.value=previous.weapons.B2||weaponB2Sel.value;
-    }
+    // Keep the newly explored candidate visible/playable, but preserve the previous Champion in storage.
     if(previousRaw){try{localStorage.setItem(OPTIMIZER_STORAGE_KEY,previousRaw);}catch(_){}}
+    programs.A=cloneProgram(candidate.p);programs.B=cloneProgram(candidateB.p);
+    weaponA1Sel.value=candidate.w1;weaponA2Sel.value=candidate.w2;
+    weaponB1Sel.value=candidateB.w1;weaponB2Sel.value=candidateB.w2;
     lastOptimized={A:cloneProgram(programs.A),B:cloneProgram(programs.B)};
     editSide='A';selectedCell=1;
     state={A:{pc:0,acc:0,flag:false,timer:0,lastSeen:0,lastHp:100,hitRecent:0,lockTime:0},B:{pc:0,acc:0,flag:false,timer:0,lastSeen:0,lastHp:100,hitRecent:0,lockTime:0}};
     renderProgram();
-    evoDetail.textContent+=` / Champion Gate ${(candGate.wr*100).toFixed(1)}% 不採用・王者 ${(prevGate.wr*100).toFixed(1)}% 維持`;
-    statusEl.textContent=`探索候補は固定Champion Gateで前回王者を上回れなかったため不採用です。保存済みChampionを維持しました（候補 ${(candGate.wr*100).toFixed(1)}% / 王者 ${(prevGate.wr*100).toFixed(1)}%）。`;
+    evoDetail.textContent+=` / Champion Gate ${(candGate.wr*100).toFixed(1)}% 不採用・候補は盤面反映 / 王者 ${(prevGate.wr*100).toFixed(1)}% 保存維持`;
+    statusEl.textContent=`探索結果を盤面へ反映しました。固定Champion Gateでは前回王者を上回れなかったため、保存Championだけ前回王者を維持します（候補 ${(candGate.wr*100).toFixed(1)}% / 王者 ${(prevGate.wr*100).toFixed(1)}%）。`;
   }
 };
