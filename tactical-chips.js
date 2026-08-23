@@ -175,9 +175,32 @@ function installOptimizerCombatAudit(){
   return true;
 }
 
+function simulatorDiagnosticReport(){
+  const seed=1908082401;
+  const pa=cloneProgram(handDesignedChampion('A')),pb=cloneProgram(handDesignedChampion('B'));
+  const ta=typeof trimProgramToCpu==='function'?trimProgramToCpu(pa):cloneProgram(pa),tb=typeof trimProgramToCpu==='function'?trimProgramToCpu(pb):cloneProgram(pb);
+  const rawFn=typeof baseSimCpu==='function'?baseSimCpu:null,wrappedFn=typeof simulateBattleWeaponAware==='function'?simulateBattleWeaponAware:null;
+  const w=['rifle','mine','burst','killer'];
+  const raw=rawFn?rawFn(pa,pb,seed,w[0],w[1],w[2],w[3]):null;
+  const trimmed=rawFn?rawFn(ta,tb,seed,w[0],w[1],w[2],w[3]):null;
+  const wrapped=wrappedFn?wrappedFn(pa,pb,seed,w[0],w[1],w[2],w[3]):null;
+  const sum=r=>{const st=r?.stats?.A||{},ac=r?.activity?.A||{};return{winner:r?.winner??null,resolved:!!r?.resolved,hpA:r?.a??null,hpB:r?.b??null,shoot:Number(st.shoot||0),mine:Number(st.mine||0),killer:Number(st.killer||0),damage:Number(st.damage||0),move:Number(st.move||0),evade:Number(st.evade||0),aim:Number(st.aim||0),turn:Number(st.turn||0),visitedCount:Number(st.visitedCount||0),activityAttacks:Number(ac.attacks||0),activityTranslation:Number(ac.translation||0),activityNonCombat:ac.nonCombat??null};};
+  const hs=p=>{try{return typeof cpuProgramHealth==='function'?cpuProgramHealth(p):null;}catch(_e){return null;}};
+  const a=sum(raw),b=sum(trimmed),c=sum(wrapped),keys=['winner','resolved','shoot','mine','killer','damage','move','evade','aim','turn','visitedCount'];
+  const diff=(x,y)=>keys.filter(k=>x[k]!==y[k]);
+  return{timestamp:new Date().toISOString(),seed,cpuClass:typeof cpuClass!=='undefined'?cpuClass:null,cpuLimit:typeof cpuChipLimit==='function'?cpuChipLimit():null,programHealth:{originalA:hs(pa),trimmedA:hs(ta),originalB:hs(pb),trimmedB:hs(tb)},rawCore:a,rawCoreAfterCpuTrim:b,optimizerPath:c,compare:{raw_vs_trim:diff(a,b),trim_vs_optimizer:diff(b,c)}};
+}
+function installSimulatorDiagnosticButton(){
+  const section=optimizeBtn?.closest?.('.section');if(!section||root.querySelector('#simDiagBtn'))return;
+  const btn=document.createElement('button');btn.type='button';btn.id='simDiagBtn';btn.textContent='シミュレータ診断';
+  btn.addEventListener('click',()=>{try{const r=simulatorDiagnosticReport(),fmt=x=>`攻${x.shoot+x.mine+x.killer}/与${x.damage}/移${x.move+x.evade}/訪${x.visitedCount}`;window.__robotSimulatorDiagnostic=r;evoDetail.textContent=`固定seed ${r.seed} / A経路 ${r.programHealth.originalA?.reachable??'-'}→CPU後${r.programHealth.trimmedA?.reachable??'-'} / Core ${fmt(r.rawCore)} / CPU後 ${fmt(r.rawCoreAfterCpuTrim)} / 探索経路 ${fmt(r.optimizerPath)} / Core→CPU ${r.compare.raw_vs_trim.length?'差異:'+r.compare.raw_vs_trim.join(','):'一致'} / CPU→探索 ${r.compare.trim_vs_optimizer.length?'差異:'+r.compare.trim_vs_optimizer.join(','):'一致'}`;statusEl.textContent=(r.compare.raw_vs_trim.length||r.compare.trim_vs_optimizer.length)?'シミュレータ診断で差異を検出しました。探索は再実行せず、この差異を先に修正してください。':'シミュレータ診断：主要統計は一致しました。';const blob=new Blob([JSON.stringify(r,null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`robot-ai-simulator-diagnostic-${r.seed}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}catch(err){console.error(err);statusEl.textContent='シミュレータ診断エラー：'+(err?.message||err);}});
+  section.querySelector('.controls')?.appendChild(btn);
+}
+
 setTimeout(()=>{
   const ok=installTacticalOptimizerRules();
   installOptimizerCombatAudit();
+  installSimulatorDiagnosticButton();
   renderPalette();renderProgram();
   if(!ok)console.error('shared battlefield optimizer patch was not installed');
 },0);
