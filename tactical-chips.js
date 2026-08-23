@@ -45,15 +45,43 @@ if(typeof teamCond==='function'){
   };
 }
 
-// Upgrade the seeded weapon-aware simulator so optimizer/Champion Gate use the same new conditions.
-(function patchTacticalSimulator(){
-  if(typeof simulateBattleWeaponAware!=='function')return;
+// The optimizer is injected after this file. Patch on the next task so the simulator exists.
+function installTacticalOptimizerRules(){
+  if(typeof simulateBattleWeaponAware!=='function')return false;
+  if(simulateBattleWeaponAware.__tacticalActivityPatched)return true;
+
   const marker="if(c==='enemyRight')return v.visible&&v.signed>0;";
   const extra=`if(c==='enemyFacingMe'){const e=op(side),a=Math.abs(nrm(Math.atan2(m.y-e.y,m.x-e.x)-e.ang));return v.visible&&a<=20*Math.PI/180;}if(c==='behindEnemy'){const e=op(side),a=Math.abs(nrm(Math.atan2(m.y-e.y,m.x-e.x)-e.ang));return v.visible&&a>=135*Math.PI/180;}if(c==='enemyWithin100')return v.visible&&v.dd<=100;if(c==='enemyWithin200')return v.visible&&v.dd<=200;if(c==='enemyWithin300')return v.visible&&v.dd<=300;if(c==='weapon1Ammo'){const w=profiles[side][0];return w==='mine'?m.mineStock>0:w==='killer'?m.killerReady:!!(m.ammo&&m.ammo[w]>0);}if(c==='weapon2Ammo'){const w=profiles[side][1];return w==='mine'?m.mineStock>0:w==='killer'?m.killerReady:!!(m.ammo&&m.ammo[w]>0);}`;
   let src=simulateBattleWeaponAware.toString();
-  if(!src.includes(marker)){console.error('tactical simulator marker not found');return;}
+  if(!src.includes(marker)){console.error('tactical simulator marker not found');return false;}
   src=src.replace(marker,marker+extra);
-  try{simulateBattleWeaponAware=eval('('+src+')');}catch(err){console.error('tactical simulator patch failed',err);}
-})();
+  let patched;
+  try{patched=eval('('+src+')');}catch(err){console.error('tactical simulator patch failed',err);return false;}
 
-setTimeout(()=>{renderPalette();renderProgram();},0);
+  const baseSim=patched;
+  const wrapped=function(...args){
+    const r=baseSim(...args);
+    if(!r||!r.stats)return r;
+    const activity=(st)=>{
+      const movement=(st.move||0)+(st.evade||0)+(st.turn||0)+(st.aim||0);
+      const attacks=(st.shoot||0)+(st.mine||0)+(st.killer||0);
+      const damage=st.damage||0;
+      return{movement,attacks,damage,inactive:movement<8&&attacks===0&&damage===0};
+    };
+    const aa=activity(r.stats.A),bb=activity(r.stats.B);
+    r.activity={A:aa,B:bb};
+    // A robot that effectively never moves or attacks is treated as losing to an active opponent.
+    // This makes inactivity a feasibility failure rather than a merely small score penalty.
+    if(aa.inactive&&!bb.inactive){r.a=0;r.b=Math.max(r.b,1);r.winner=-1;r.resolved=true;}
+    else if(bb.inactive&&!aa.inactive){r.b=0;r.a=Math.max(r.a,1);r.winner=1;r.resolved=true;}
+    else if(aa.inactive&&bb.inactive){r.winner=0;r.resolved=false;}
+    return r;
+  };
+  wrapped.__tacticalActivityPatched=true;
+  simulateBattleWeaponAware=wrapped;
+  return true;
+}
+setTimeout(()=>{
+  installTacticalOptimizerRules();
+  renderPalette();renderProgram();
+},0);
