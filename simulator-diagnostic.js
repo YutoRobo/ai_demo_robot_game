@@ -121,12 +121,40 @@
   function downloadReport(r){try{const blob=new Blob([JSON.stringify(r,null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`robot-ai-simulator-diagnostic-${r.seed}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}catch(_e){}}
   setTimeout(()=>{const section=optimizeBtn?.closest?.('.section');if(!section)return;const old=root.querySelector('#simDiagBtn');if(old)old.remove();const btn=document.createElement('button');btn.type='button';btn.id='simDiagBtn';btn.textContent='シミュレータ診断';btn.addEventListener('click',()=>{try{const r=makeReport();window.__robotSimulatorDiagnostic=r;renderReport(r);downloadReport(r);}catch(err){console.error(err);statusEl.textContent='シミュレータ診断エラー：'+(err?.message||err);}});section.querySelector('.controls')?.appendChild(btn);},0);
 
-  // Tactical rules install a deferred wrapper earlier in source order. Re-assert this
-  // measured simulator after that timer has run so exploration and audits use the same engine.
   setTimeout(()=>{
     simulateBattleWeaponAware=authoritativeBattleSimulator;
     simulateBattleWeaponAware.__authoritativeMeasured=true;
     simulateBattleWeaponAware.__sharedBattlefield=true;
     simulateBattleWeaponAware.__tacticalActivityPatched=true;
   },0);
+})();
+
+// Quality patch for the sparse 300-population optimizer.
+// Keeps win rate dominant while rejecting structurally degenerate programs before battle evaluation.
+(function installSparseOptimizerQualityPatch(){
+  if(typeof optimizeHybrid!=='function')return;
+  function reachableIndices(p){
+    const seen=new Set([0]),q=[0];
+    while(q.length){const i=q.shift(),c=i===0?{kind:'action',next:'R'}:p[i];if(!c)continue;const ns=c.kind==='action'?[nextCell(i,c.next)]:[nextCell(i,c.yes),nextCell(i,c.no)];for(const n of ns){if(n===i||n<0||n>=36||seen.has(n)||(!p[n]&&n!==0))continue;seen.add(n);q.push(n);}}
+    return seen;
+  }
+  function combatProgramQuality(program){
+    const p=typeof trimProgramToCpu==='function'?trimProgramToCpu(program):cloneProgram(program),reach=reachableIndices(p),types=[...reach].filter(i=>i>0).map(i=>p[i]?.type).filter(Boolean);
+    const sensors=new Set(['enemyFront','enemyNear','enemyFar','enemyLeft','enemyRight','enemyInNarrowFov','enemyInMediumFov','enemyInWideFov','enemyFacingMe','behindEnemy','enemyWithin100','enemyWithin200','enemyWithin300','canShoot']);
+    const hasSensor=types.some(t=>sensors.has(t)),hasOrient=types.some(t=>['aim','turnL','turnR'].includes(t)),hasWeapon=types.some(t=>t==='weapon1'||t==='weapon2'),hasMove=types.some(t=>['forward','back','strafeL','strafeR','evade'].includes(t));
+    const valid=reach.size-1>=4&&hasSensor&&hasOrient&&hasWeapon&&(hasMove||types.includes('aim'));
+    return{valid,reachable:reach.size-1,hasSensor,hasOrient,hasWeapon,hasMove};
+  }
+  let src=optimizeHybrid.toString(),changed=0;
+  const replace=(a,b)=>{if(src.includes(a)){src=src.replace(a,b);changed++;}else console.warn('optimizer quality marker missing',a.slice(0,70));};
+  replace('TRAIN_OPPS=2','TRAIN_OPPS=4');
+  replace("function scoreOf(wr,margin,resolved){const m=Math.max(-1,Math.min(1,margin/100));return 1000*(.92*wr+.05*((m+1)/2)+.03*resolved);}","function scoreOf(wr,margin,resolved,avgDamage,effectiveHit){const m=Math.max(-1,Math.min(1,margin/100)),dn=Math.max(0,Math.min(1,(avgDamage||0)/100)),hn=Math.max(0,Math.min(1,effectiveHit||0));return 1000*(.88*wr+.04*((m+1)/2)+.02*resolved+.04*dn+.02*hn);}");
+  replace('function runEval(ind,opps,seedBase){let wins=0',"function runEval(ind,opps,seedBase){const quality=combatProgramQuality(ind.genome.p);if(!quality.valid)return{score:-1000,wr:0,wins:0,draws:0,losses:0,resolved:0,avgMargin:-100,avgDamage:0,effectiveHit:0,behavior:[0,0,0,0,0,0,0,0],nemesisIds:[],opponentIds:opps.map(x=>x.id),invalid:true,quality};let wins=0");
+  replace('score:scoreOf(wr,avgMargin,rr),wr,wins,draws,losses,resolved:rr,avgMargin,behavior:',"score:scoreOf(wr,avgMargin,rr,(agg.damage||0)/games,Math.min(1,((agg.damage||0)/games)/Math.max(1,(((agg.shoot||0)+(agg.killer||0)+(agg.mine||0))/games)*12))),wr,wins,draws,losses,resolved:rr,avgMargin,avgDamage:(agg.damage||0)/games,effectiveHit:Math.min(1,((agg.damage||0)/games)/Math.max(1,(((agg.shoot||0)+(agg.killer||0)+(agg.mine||0))/games)*12)),behavior:");
+  if(changed<4){console.error('optimizer quality patch incomplete',changed);return;}
+  try{
+    optimizeHybrid=eval('('+src+')');
+    optimizeHybrid.__qualityPatch='combat-structure-damage-v1';
+    console.info('optimizer quality patch installed: 4 train opponents, structural gate, damage/effective-hit scoring');
+  }catch(err){console.error('optimizer quality patch failed',err);}
 })();
