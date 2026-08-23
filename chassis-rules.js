@@ -10,6 +10,11 @@ let chassisBySide={A:'standard',B:'standard'};
 try{const raw=localStorage.getItem(CHASSIS_STORAGE_KEY),saved=raw&&JSON.parse(raw);if(saved){if(CHASSIS_TYPES[saved.A])chassisBySide.A=saved.A;if(CHASSIS_TYPES[saved.B])chassisBySide.B=saved.B;}}catch(_e){}
 function chassisStats(side){return CHASSIS_TYPES[chassisBySide[side]]||CHASSIS_TYPES.standard;}
 function saveChassisSelection(){try{localStorage.setItem(CHASSIS_STORAGE_KEY,JSON.stringify(chassisBySide));}catch(_e){}}
+function applyChassisStatsToBot(o,side){const c=chassisStats(side);o.hp=c.hp;o.maxHp=c.hp;o.moveMul=c.move;o.strafeMul=c.strafe;o.turnMul=c.turn;return o;}
+const baseMoveBotChassis=moveBot;
+moveBot=function(o,f,s,t,dt){o.ang=norm(o.ang+t*2.1*(o.turnMul||1)*dt);const sp=105,ox=o.x,oy=o.y,moveMul=o.moveMul||1,strafeMul=o.strafeMul||1;o.x+=(Math.cos(o.ang)*f*moveMul+Math.cos(o.ang+Math.PI/2)*s*strafeMul)*sp*dt;o.y+=(Math.sin(o.ang)*f*moveMul+Math.sin(o.ang+Math.PI/2)*s*strafeMul)*sp*dt;o.x=Math.max(24,Math.min(cv.width-24,o.x));o.y=Math.max(24,Math.min(cv.height-24,o.y));if(obstacles.some(ob=>circleRectHit(o.x,o.y,o.r,ob))){o.x=ox;o.y=oy;}};
+const baseResetWorldChassis=resetWorld;
+resetWorld=function(){baseResetWorldChassis();applyChassisStatsToBot(A,'A');applyChassisStatsToBot(B,'B');state.A.lastHp=A.hp;state.B.lastHp=B.hp;draw();};
 const chassisSection=document.createElement('div');chassisSection.className='section';
 chassisSection.innerHTML='<strong>機体タイプ</strong><div class="editor" style="margin-top:8px"><label>自機<select id="chassisASel"><option value="light">軽量型 / HP80 / 高速</option><option value="standard">標準型 / HP100</option><option value="heavy">重装型 / HP140 / 低速</option><option value="multileg">多脚型 / HP110 / 横移動特化</option></select></label><label>敵機<select id="chassisBSel"><option value="light">軽量型 / HP80 / 高速</option><option value="standard">標準型 / HP100</option><option value="heavy">重装型 / HP140 / 低速</option><option value="multileg">多脚型 / HP110 / 横移動特化</option></select></label></div><div id="chassisInfo" class="mini" style="margin-top:6px"></div>';
 const cpuSectionNode=root.querySelector('#cpuClassSel')?.closest('.section');
