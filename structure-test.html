@@ -42,7 +42,7 @@ function trimProgramToCpu(p){const n=cloneProgram(p),limit=cpuChipLimit(),keep=[
 function renderSeed(){const p=seedA(),g=document.getElementById('seedGrid');g.innerHTML='';for(let i=0;i<36;i++){const d=document.createElement('div');d.className='cell';if(i===0){d.classList.add('start');d.textContent='START →';}else if(p[i]){d.classList.add(p[i].kind);const label=chipTypes.find(x=>x[0]===p[i].type)?.[1]||p[i].type;d.textContent=p[i].kind==='cond'?`${label}\nY:${p[i].yes} N:${p[i].no}`:`${label} ${p[i].next}`;}g.appendChild(d);}}
 renderSeed();
 </script>
-<script src="./structural-evolution.js?v=20260824-struct01"></script>
+<script src="./structural-evolution.js?v=20260824-struct02"></script>
 <script>
 optimizeBtn.addEventListener('click',()=>{try{const r=window.__structuralEvolution.runSuite();document.getElementById('report').textContent=JSON.stringify(r,null,2);}catch(err){statusEl.textContent='テストエラー: '+(err?.message||err);console.error(err);}});
 </script>
