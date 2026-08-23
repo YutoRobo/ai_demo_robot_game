@@ -149,23 +149,24 @@ function installOptimizerCombatAudit(){
   const baseOptimize=optimizeHybrid;
   const wrapped=async function(...args){
     const result=await baseOptimize(...args);
-    let m=auditInstalledCombatProgram();
-    let fallback=false;
-    if(m&&(m.attacks<0.5||m.nonCombatRate>0.5)){
-      fallback=true;
-      programs.A=typeof trimProgramToCpu==='function'?trimProgramToCpu(compactCombatProgram()):compactCombatProgram();
-      weaponA1Sel.value='rifle';weaponA2Sel.value='rapid';
-      editSide='A';selectedCell=1;state.A={pc:0,acc:0,flag:false,timer:0,lastSeen:0,lastHp:100,hitRecent:0,lockTime:0};
-      renderProgram();
-      m=auditInstalledCombatProgram();
-      if(typeof saveOptimizedResult==='function')saveOptimizedResult({combatValidity:{fallback:true,reason:'nonCombatFinalist',audit:m}});
-    }
+    // Snapshot the exact explored candidate and keep it on the board regardless of audit result.
+    const exploredA=cloneProgram(programs.A),exploredB=cloneProgram(programs.B);
+    const exploredWeapons={A1:weaponA1Sel.value,A2:weaponA2Sel.value,B1:weaponB1Sel.value,B2:weaponB2Sel.value};
+    const m=auditInstalledCombatProgram(exploredA,exploredWeapons.A1,exploredWeapons.A2);
+    programs.A=exploredA;programs.B=exploredB;
+    weaponA1Sel.value=exploredWeapons.A1;weaponA2Sel.value=exploredWeapons.A2;
+    weaponB1Sel.value=exploredWeapons.B1;weaponB2Sel.value=exploredWeapons.B2;
+    editSide='A';selectedCell=1;
+    state={A:{pc:0,acc:0,flag:false,timer:0,lastSeen:0,lastHp:100,hitRecent:0,lockTime:0},B:{pc:0,acc:0,flag:false,timer:0,lastSeen:0,lastHp:100,hitRecent:0,lockTime:0}};
+    lastOptimized={A:cloneProgram(programs.A),B:cloneProgram(programs.B)};
+    renderProgram();
     if(m){
       const pct=x=>(100*x).toFixed(1)+'%';
-      evoDetail.textContent=`${evoDetail.textContent} / 動的Gate${m.games}戦: 勝率 ${pct(m.winRate)}・決着率 ${pct(m.resolvedRate)}・非戦闘 ${pct(m.nonCombatRate)}・平均攻撃 ${m.attacks.toFixed(1)}回・平均与ダメ ${m.damage.toFixed(1)}・平均移動/回避 ${m.translation.toFixed(1)}回${fallback?' / 非戦闘候補を棄却し安全個体へ切替':''}`;
-      statusEl.textContent=fallback
-        ?`探索首位は実戦で攻撃しなかったため棄却しました。Compact用の戦闘可能個体へ切り替え、再監査しました（平均攻撃 ${m.attacks.toFixed(1)}回、平均与ダメ ${m.damage.toFixed(1)}）。`
-        :`探索完了。動的Gate${m.games}戦を通過しました：勝率 ${pct(m.winRate)}、決着率 ${pct(m.resolvedRate)}、平均攻撃 ${m.attacks.toFixed(1)}回、平均与ダメ ${m.damage.toFixed(1)}。`;
+      const invalid=m.attacks<0.5||m.nonCombatRate>0.5;
+      evoDetail.textContent=`${evoDetail.textContent} / 動的監査${m.games}戦: 勝率 ${pct(m.winRate)}・決着率 ${pct(m.resolvedRate)}・非戦闘 ${pct(m.nonCombatRate)}・平均攻撃 ${m.attacks.toFixed(1)}回・平均与ダメ ${m.damage.toFixed(1)}・平均移動/回避 ${m.translation.toFixed(1)}回${invalid?' / ⚠ 非戦闘傾向あり（探索結果は盤面維持）':''}`;
+      statusEl.textContent=invalid
+        ?`探索結果をそのまま盤面へ反映しました。ただし動的監査では非戦闘傾向があります（平均攻撃 ${m.attacks.toFixed(1)}回、平均与ダメ ${m.damage.toFixed(1)}）。`
+        :`探索結果を盤面へ反映しました。動的監査${m.games}戦：勝率 ${pct(m.winRate)}、決着率 ${pct(m.resolvedRate)}、平均攻撃 ${m.attacks.toFixed(1)}回、平均与ダメ ${m.damage.toFixed(1)}。`;
     }
     return result;
   };
