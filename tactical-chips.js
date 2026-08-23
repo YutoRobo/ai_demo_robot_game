@@ -10,8 +10,6 @@ const TACTICAL_CHIPS=[
 ];
 for(const def of TACTICAL_CHIPS)if(!chipTypes.some(x=>x[0]===def[0]))chipTypes.push(def);
 
-// One battlefield generator is used by both the visible battle and optimizer simulation.
-// This keeps obstacle count/distribution, spawn margins and minimum separation identical.
 function commonBattlefield(rng=Math.random){
   const margin=55,minSep=200,obs=randomObstacles(rng);
   let ax,ay,bx,by,tries=0;
@@ -62,28 +60,32 @@ if(typeof teamCond==='function'){
   };
 }
 
+function compactCombatProgram(){
+  const p=Array(36).fill(null);
+  p[1]={type:'enemyInWideFov',kind:'cond',yes:'D',no:'R'};
+  p[2]={type:'turnR',kind:'action',next:'L'};
+  p[7]={type:'aim',kind:'action',next:'R'};
+  p[8]={type:'canShoot',kind:'cond',yes:'R',no:'L'};
+  p[9]={type:'weapon1',kind:'action',next:'D'};
+  p[15]={type:'strafeR',kind:'action',next:'U'};
+  return p;
+}
+
 function installTacticalOptimizerRules(){
   if(typeof simulateBattleWeaponAware!=='function')return false;
   if(simulateBattleWeaponAware.__tacticalActivityPatched)return true;
-
-  // CPU rules wrap the simulator before this file's deferred patch runs. Patch the underlying
-  // simulator directly when available, then rebuild the CPU wrapper around the patched version.
   const sourceSim=(typeof baseSimCpu==='function')?baseSimCpu:simulateBattleWeaponAware;
   let src=sourceSim.toString();
-
   const oldArena="const rng=seeded(seed),margin=50,minSep=180,obs=randomObstacles(rng);let ax,ay,bx,by;do{ax=margin+rng()*(cv.width-2*margin);ay=margin+rng()*(cv.height-2*margin);bx=margin+rng()*(cv.width-2*margin);by=margin+rng()*(cv.height-2*margin);}while(Math.hypot(ax-bx,ay-by)<minSep||obs.some(o=>circleRectHit(ax,ay,28,o)||circleRectHit(bx,by,28,o)));";
   const newArena="const rng=seeded(seed),field=commonBattlefield(rng),obs=field.obs,ax=field.ax,ay=field.ay,bx=field.bx,by=field.by;";
   if(!src.includes(oldArena)){console.error('optimizer battlefield marker not found');return false;}
   src=src.replace(oldArena,newArena);
-
   const marker="if(c==='enemyRight')return v.visible&&v.signed>0;";
   const extra=`if(c==='enemyFacingMe'){const e=op(side),a=Math.abs(nrm(Math.atan2(m.y-e.y,m.x-e.x)-e.ang));return v.visible&&a<=20*Math.PI/180;}if(c==='behindEnemy'){const e=op(side),a=Math.abs(nrm(Math.atan2(m.y-e.y,m.x-e.x)-e.ang));return v.visible&&a>=135*Math.PI/180;}if(c==='enemyWithin100')return v.visible&&v.dd<=100;if(c==='enemyWithin200')return v.visible&&v.dd<=200;if(c==='enemyWithin300')return v.visible&&v.dd<=300;if(c==='weapon1Ammo'){const w=profiles[side][0];return w==='mine'?m.mineStock>0:w==='killer'?m.killerReady:!!(m.ammo&&m.ammo[w]>0);}if(c==='weapon2Ammo'){const w=profiles[side][1];return w==='mine'?m.mineStock>0:w==='killer'?m.killerReady:!!(m.ammo&&m.ammo[w]>0);}`;
   if(!src.includes(marker)){console.error('tactical simulator marker not found');return false;}
   src=src.replace(marker,marker+extra);
-
   let patched;
   try{patched=eval('('+src+')');}catch(err){console.error('tactical simulator patch failed',err);return false;}
-
   const activitySim=function(...args){
     const r=patched(...args);
     if(!r||!r.stats)return r;
@@ -105,26 +107,24 @@ function installTacticalOptimizerRules(){
     else if(bb.weakCombat&&!aa.weakCombat&&aa.damage===0&&bb.damage===0){r.b=0;r.a=Math.max(r.a,1);r.winner=1;r.resolved=true;}
     return r;
   };
-
-  if(typeof baseSimCpu==='function'&&typeof trimProgramToCpu==='function'){
-    simulateBattleWeaponAware=function(pa,pb,seed,a1,a2,b1,b2){return activitySim(trimProgramToCpu(pa),trimProgramToCpu(pb),seed,a1,a2,b1,b2);};
-  }else simulateBattleWeaponAware=activitySim;
+  if(typeof baseSimCpu==='function'&&typeof trimProgramToCpu==='function')simulateBattleWeaponAware=function(pa,pb,seed,a1,a2,b1,b2){return activitySim(trimProgramToCpu(pa),trimProgramToCpu(pb),seed,a1,a2,b1,b2);};
+  else simulateBattleWeaponAware=activitySim;
   simulateBattleWeaponAware.__tacticalActivityPatched=true;
   simulateBattleWeaponAware.__sharedBattlefield=true;
   return true;
 }
 
-function auditInstalledCombatProgram(){
+function auditInstalledCombatProgram(program=programs.A,w1=weaponA1Sel.value,w2=weaponA2Sel.value){
   if(typeof simulateBattleWeaponAware!=='function')return null;
+  const active=compactCombatProgram();
   const baselines=[
+    {p:active,w1:'rifle',w2:'rapid'},
+    {p:active,w1:'heavy',w2:'rapid'},
     {p:handDesignedChampion('A'),w1:'rifle',w2:'mine'},
-    {p:handDesignedChampion('A'),w1:'heavy',w2:'rapid'},
-    {p:handDesignedChampion('B'),w1:'burst',w2:'killer'},
     {p:strategicSeeds()[0],w1:'rapid',w2:'mine'}
   ];
   const N=24;
   let games=0,wins=0,draws=0,losses=0,resolved=0,attacks=0,damage=0,translation=0,orientation=0,nonCombat=0;
-  const a1=weaponA1Sel.value,a2=weaponA2Sel.value;
   function add(r,side){
     if(!r)return;games++;
     const win=side==='A'?r.winner>0:r.winner<0,loss=side==='A'?r.winner<0:r.winner>0;
@@ -138,7 +138,7 @@ function auditInstalledCombatProgram(){
   }
   for(let i=0;i<N;i++){
     const q=baselines[i%baselines.length],seed=1880000000+i*23003;
-    add(simulateBattleWeaponAware(programs.A,q.p,seed,a1,a2,q.w1,q.w2),'A');
+    add(simulateBattleWeaponAware(program,q.p,seed,w1,w2,q.w1,q.w2),'A');
   }
   if(!games)return null;
   return{games,wins,draws,losses,winRate:wins/games,resolvedRate:resolved/games,timeoutRate:(games-resolved)/games,attacks:attacks/games,damage:damage/games,translation:translation/games,orientation:orientation/games,nonCombatRate:nonCombat/games};
@@ -149,11 +149,23 @@ function installOptimizerCombatAudit(){
   const baseOptimize=optimizeHybrid;
   const wrapped=async function(...args){
     const result=await baseOptimize(...args);
-    const m=auditInstalledCombatProgram();
+    let m=auditInstalledCombatProgram();
+    let fallback=false;
+    if(m&&(m.attacks<0.5||m.nonCombatRate>0.5)){
+      fallback=true;
+      programs.A=typeof trimProgramToCpu==='function'?trimProgramToCpu(compactCombatProgram()):compactCombatProgram();
+      weaponA1Sel.value='rifle';weaponA2Sel.value='rapid';
+      editSide='A';selectedCell=1;state.A={pc:0,acc:0,flag:false,timer:0,lastSeen:0,lastHp:100,hitRecent:0,lockTime:0};
+      renderProgram();
+      m=auditInstalledCombatProgram();
+      if(typeof saveOptimizedResult==='function')saveOptimizedResult({combatValidity:{fallback:true,reason:'nonCombatFinalist',audit:m}});
+    }
     if(m){
       const pct=x=>(100*x).toFixed(1)+'%';
-      evoDetail.textContent=`${evoDetail.textContent} / 固定監査${m.games}戦: 勝率 ${pct(m.winRate)}・決着率 ${pct(m.resolvedRate)}・時間切れ ${pct(m.timeoutRate)}・平均攻撃 ${m.attacks.toFixed(1)}回・平均与ダメ ${m.damage.toFixed(1)}・平均移動/回避 ${m.translation.toFixed(1)}回`;
-      statusEl.textContent=`探索完了。実戦と同じ戦場生成条件で固定監査${m.games}戦：勝率 ${pct(m.winRate)}、決着率 ${pct(m.resolvedRate)}、平均攻撃 ${m.attacks.toFixed(1)}回、平均与ダメ ${m.damage.toFixed(1)}。1試合は最大180秒です。`;
+      evoDetail.textContent=`${evoDetail.textContent} / 動的Gate${m.games}戦: 勝率 ${pct(m.winRate)}・決着率 ${pct(m.resolvedRate)}・非戦闘 ${pct(m.nonCombatRate)}・平均攻撃 ${m.attacks.toFixed(1)}回・平均与ダメ ${m.damage.toFixed(1)}・平均移動/回避 ${m.translation.toFixed(1)}回${fallback?' / 非戦闘候補を棄却し安全個体へ切替':''}`;
+      statusEl.textContent=fallback
+        ?`探索首位は実戦で攻撃しなかったため棄却しました。Compact用の戦闘可能個体へ切り替え、再監査しました（平均攻撃 ${m.attacks.toFixed(1)}回、平均与ダメ ${m.damage.toFixed(1)}）。`
+        :`探索完了。動的Gate${m.games}戦を通過しました：勝率 ${pct(m.winRate)}、決着率 ${pct(m.resolvedRate)}、平均攻撃 ${m.attacks.toFixed(1)}回、平均与ダメ ${m.damage.toFixed(1)}。`;
     }
     return result;
   };
