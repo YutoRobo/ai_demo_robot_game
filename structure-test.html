@@ -10,7 +10,7 @@ body{margin:0;background:#111317;color:#f1f3f5;font-family:system-ui,sans-serif}
 <body>
 <main id="testRoot">
 <h1 style="font-size:20px">構造進化エンジン単体試験</h1>
-<p class="mini">本番の300個体探索とは切り離されています。突然変異・成長/縮約・サブグラフ交叉の成立性だけを検証します。</p>
+<p class="mini">本番の300個体探索とは切り離されています。突然変異・成長/縮約・サブグラフ交叉と、チップメタデータ駆動の成立性を検証します。</p>
 <div class="panel section">
   <div class="controls">
     <button id="optimizeBtn" type="button">テスト実行</button>
@@ -42,7 +42,8 @@ function trimProgramToCpu(p){const n=cloneProgram(p),limit=cpuChipLimit(),keep=[
 function renderSeed(){const p=seedA(),g=document.getElementById('seedGrid');g.innerHTML='';for(let i=0;i<36;i++){const d=document.createElement('div');d.className='cell';if(i===0){d.classList.add('start');d.textContent='START →';}else if(p[i]){d.classList.add(p[i].kind);const label=chipTypes.find(x=>x[0]===p[i].type)?.[1]||p[i].type;d.textContent=p[i].kind==='cond'?`${label}\nY:${p[i].yes} N:${p[i].no}`:`${label} ${p[i].next}`;}g.appendChild(d);}}
 renderSeed();
 </script>
-<script src="./structural-evolution.js?v=20260824-struct03"></script>
+<script src="./chip-catalog.js?v=20260824-chipmeta01"></script>
+<script src="./structural-evolution.js?v=20260824-struct04"></script>
 <script>
 optimizeBtn.addEventListener('click',()=>{try{const r=window.__structuralEvolution.runSuite();document.getElementById('report').textContent=JSON.stringify(r,null,2);}catch(err){statusEl.textContent='テストエラー: '+(err?.message||err);console.error(err);}});
 </script>
