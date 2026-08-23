@@ -109,15 +109,15 @@
   simulateBattleWeaponAware.__authoritativeMeasured=true;
 
   function summary(r,side='A'){const st=r?.stats?.[side]||{};return{winner:r?.winner??null,resolved:!!r?.resolved,shoot:+(st.shoot||0),mine:+(st.mine||0),killer:+(st.killer||0),damage:+(st.damage||0),move:+(st.move||0),evade:+(st.evade||0),aim:+(st.aim||0),turn:+(st.turn||0),visitedCount:+(st.visitedCount||0)};}
-  function oneChip(type){const p=Array(36).fill(null);p[1]={type,kind:'action',next:'L'};return p;}
+  function probeProgram(type){const p=Array(36).fill(null);p[1]={type,kind:'action',next:'R'};p[2]={type:'weapon1',kind:'action',next:'L'};return p;}
   function makeReport(){
     const pa=cloneProgram(handDesignedChampion('A')),pb=cloneProgram(handDesignedChampion('B'));
-    const wait=oneChip('wait'),attack=oneChip('weapon1'),move=oneChip('forward'),turn=oneChip('turnR');
+    const wait=probeProgram('wait'),attack=probeProgram('weapon1'),move=probeProgram('forward'),turn=probeProgram('turnR');
     const normal=summary(authoritativeBattleSimulator(pa,pb,DIAG_SEED,'rifle','mine','burst','killer'));
     const probes={attack:summary(authoritativeBattleSimulator(attack,wait,DIAG_SEED+11,'rifle','mine','rifle','mine')),move:summary(authoritativeBattleSimulator(move,wait,DIAG_SEED+12,'rifle','mine','rifle','mine')),turn:summary(authoritativeBattleSimulator(turn,wait,DIAG_SEED+13,'rifle','mine','rifle','mine'))};
-    return{timestamp:new Date().toISOString(),seed:DIAG_SEED,cpuClass:typeof cpuClass!=='undefined'?cpuClass:null,cpuLimit:typeof cpuChipLimit==='function'?cpuChipLimit():null,normal,probes,engine:'authoritative-measured-v1'};
+    return{timestamp:new Date().toISOString(),seed:DIAG_SEED,cpuClass:typeof cpuClass!=='undefined'?cpuClass:null,cpuLimit:typeof cpuChipLimit==='function'?cpuChipLimit():null,normal,probes,engine:'authoritative-measured-v2'};
   }
-  function renderReport(r){const f=x=>`攻${x.shoot+x.mine+x.killer}/与${x.damage}/移${x.move+x.evade}/旋${x.turn}/訪${x.visitedCount}`;const ok=(r.probes.attack.shoot>0||r.probes.attack.mine>0||r.probes.attack.killer>0)&&r.probes.move.move>0&&r.probes.turn.turn>0;evoDetail.textContent=`固定seed ${r.seed} / 手設計 ${f(r.normal)} / 強制射撃 ${f(r.probes.attack)} / 強制前進 ${f(r.probes.move)} / 強制旋回 ${f(r.probes.turn)} / 計測実行器 ${ok?'正常':'異常'} / engine ${r.engine}`;statusEl.textContent=ok?'シミュレータ診断：命令実行と行動統計の計測は正常です。探索を再試験できます。':'シミュレータ診断：強制命令の計測に異常があります。探索はまだ実行しないでください。';}
+  function renderReport(r){const f=x=>`攻${x.shoot+x.mine+x.killer}/与${x.damage}/移${x.move+x.evade}/旋${x.turn}/訪${x.visitedCount}`;const ok=(r.probes.attack.shoot>0||r.probes.attack.mine>0||r.probes.attack.killer>0)&&r.probes.move.move>0&&r.probes.turn.turn>0;evoDetail.textContent=`固定seed ${r.seed} / 手設計 ${f(r.normal)} / 強制射撃 ${f(r.probes.attack)} / 強制前進 ${f(r.probes.move)} / 強制旋回 ${f(r.probes.turn)} / 計測実行器 ${ok?'正常':'異常'} / engine ${r.engine}`;statusEl.textContent=ok?'シミュレータ診断：命令実行と行動統計の計測は正常です。20世代の探索を再試験できます。':'シミュレータ診断：強制命令の計測に異常があります。探索はまだ実行しないでください。';}
   function downloadReport(r){try{const blob=new Blob([JSON.stringify(r,null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`robot-ai-simulator-diagnostic-${r.seed}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}catch(_e){}}
   setTimeout(()=>{const section=optimizeBtn?.closest?.('.section');if(!section)return;const old=root.querySelector('#simDiagBtn');if(old)old.remove();const btn=document.createElement('button');btn.type='button';btn.id='simDiagBtn';btn.textContent='シミュレータ診断';btn.addEventListener('click',()=>{try{const r=makeReport();window.__robotSimulatorDiagnostic=r;renderReport(r);downloadReport(r);}catch(err){console.error(err);statusEl.textContent='シミュレータ診断エラー：'+(err?.message||err);}});section.querySelector('.controls')?.appendChild(btn);},0);
 })();
