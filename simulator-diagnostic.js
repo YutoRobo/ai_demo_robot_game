@@ -120,4 +120,13 @@
   function renderReport(r){const f=x=>`攻${x.shoot+x.mine+x.killer}/与${x.damage}/移${x.move+x.evade}/旋${x.turn}/訪${x.visitedCount}`;const ok=(r.probes.attack.shoot>0||r.probes.attack.mine>0||r.probes.attack.killer>0)&&r.probes.move.move>0&&r.probes.turn.turn>0;evoDetail.textContent=`固定seed ${r.seed} / 手設計 ${f(r.normal)} / 強制射撃 ${f(r.probes.attack)} / 強制前進 ${f(r.probes.move)} / 強制旋回 ${f(r.probes.turn)} / 計測実行器 ${ok?'正常':'異常'} / engine ${r.engine}`;statusEl.textContent=ok?'シミュレータ診断：命令実行と行動統計の計測は正常です。20世代の探索を再試験できます。':'シミュレータ診断：強制命令の計測に異常があります。探索はまだ実行しないでください。';}
   function downloadReport(r){try{const blob=new Blob([JSON.stringify(r,null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`robot-ai-simulator-diagnostic-${r.seed}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}catch(_e){}}
   setTimeout(()=>{const section=optimizeBtn?.closest?.('.section');if(!section)return;const old=root.querySelector('#simDiagBtn');if(old)old.remove();const btn=document.createElement('button');btn.type='button';btn.id='simDiagBtn';btn.textContent='シミュレータ診断';btn.addEventListener('click',()=>{try{const r=makeReport();window.__robotSimulatorDiagnostic=r;renderReport(r);downloadReport(r);}catch(err){console.error(err);statusEl.textContent='シミュレータ診断エラー：'+(err?.message||err);}});section.querySelector('.controls')?.appendChild(btn);},0);
+
+  // Tactical rules install a deferred wrapper earlier in source order. Re-assert this
+  // measured simulator after that timer has run so exploration and audits use the same engine.
+  setTimeout(()=>{
+    simulateBattleWeaponAware=authoritativeBattleSimulator;
+    simulateBattleWeaponAware.__authoritativeMeasured=true;
+    simulateBattleWeaponAware.__sharedBattlefield=true;
+    simulateBattleWeaponAware.__tacticalActivityPatched=true;
+  },0);
 })();
