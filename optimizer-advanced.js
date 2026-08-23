@@ -38,7 +38,7 @@ optimizeHybrid = async function(maxGenerations=1000){
   const weaponList=['rifle','burst','heavy','rapid','mine','killer'];
   const weaponName={rifle:'ライフル',burst:'バースト',heavy:'ヘビー弾',rapid:'速射砲',mine:'地雷',killer:'強化弾'};
   const ITER=Math.max(20,Math.min(20000,Math.floor(maxGenerations||1000)));
-  const POP=32,ELITE=8,QUICK=6,VAL=18,FINAL=80;
+  const POP=20,ELITE=5,QUICK=2,VAL=6,FINAL=24;
   let battleCount=0;
   const archive=new Map(),hall=[];
 
@@ -167,7 +167,7 @@ optimizeHybrid = async function(maxGenerations=1000){
     cfg(handDesignedChampion('A'),'rifle','mine'),cfg(handDesignedChampion('A'),'heavy','rapid'),
     cfg(handDesignedChampion('B'),'burst','killer'),cfg(strategicSeeds()[0],'rapid','mine'),cfg(strategicSeeds()[1],'heavy','killer')
   ];
-  const trainOpp=starters.filter((_,i)=>i%17===0).slice(0,24);
+  const trainOpp=starters.filter((_,i)=>i%17===0).slice(0,16);
   const trainSeeds=Array.from({length:QUICK},(_,i)=>810000000+i*977);
   const valSeeds=Array.from({length:VAL},(_,i)=>1210000000+i*10007);
   const baselineSeeds=Array.from({length:VAL},(_,i)=>1310000000+i*12011);
@@ -175,15 +175,15 @@ optimizeHybrid = async function(maxGenerations=1000){
   let population=scored.slice(0,POP);for(const e of population)putArchive(e);hall.push(...population.slice(0,ELITE).map(e=>e.v));
   let bestTrain=population[0],bestValidated=null;
   function validate(v){
-    const valOpp=[...baselineProfiles,...hall.slice(-10),...population.slice(0,8).map(e=>e.v)],vr=scoreAgainst(v,valOpp,valSeeds,VAL),br=scoreAgainst(v,baselineProfiles,baselineSeeds,VAL);
+    const valOpp=[...baselineProfiles,...hall.slice(-6),...population.slice(0,5).map(e=>e.v)],vr=scoreAgainst(v,valOpp,valSeeds,VAL),br=scoreAgainst(v,baselineProfiles,baselineSeeds,VAL);
     return{v,val:vr,base:br,combined:.62*vr.score+.38*br.score};
   }
   bestValidated=validate(bestTrain.v);
 
   for(let g=0;g<ITER;g++){
     const genSeeds=Array.from({length:QUICK},(_,i)=>900000000+g*100003+i*977);
-    const archivePool=[...archive.values()].sort((a,b)=>b.score-a.score).slice(0,48);
-    const opponentPool=[...hall,...population.slice(0,12).map(e=>e.v),...trainOpp].slice(0,32);
+    const archivePool=[...archive.values()].sort((a,b)=>b.score-a.score).slice(0,32);
+    const opponentPool=[...hall,...population.slice(0,8).map(e=>e.v),...trainOpp].slice(0,20);
     const offspring=[];
     while(offspring.length<POP-ELITE){
       const parent=tournament(Math.random()<.35&&archivePool.length?archivePool:population).v;
@@ -195,11 +195,11 @@ optimizeHybrid = async function(maxGenerations=1000){
     const elites=population.slice().sort((a,b)=>b.score-a.score).slice(0,ELITE);
     const merged=[...elites,...offspring];
     population=merged.map(e=>({v:e.v,...scoreAgainst(e.v,opponentPool,genSeeds)})).sort((a,b)=>b.score-a.score).slice(0,POP);
-    if(population[0].score>bestTrain.score){bestTrain=population[0];hall.push(bestTrain.v);if(hall.length>32)hall.shift();}
-    for(const e of population.slice(0,8))putArchive(e);
+    if(population[0].score>bestTrain.score){bestTrain=population[0];hall.push(bestTrain.v);if(hall.length>20)hall.shift();}
+    for(const e of population.slice(0,5))putArchive(e);
 
     if(g%20===0||g===ITER-1){
-      const candidates=[bestTrain.v,...population.slice(0,8).map(e=>e.v),...[...archive.values()].sort((a,b)=>b.score-a.score).slice(0,8).map(e=>e.v),...hall.slice(-6)];
+      const candidates=[bestTrain.v,...population.slice(0,5).map(e=>e.v),...[...archive.values()].sort((a,b)=>b.score-a.score).slice(0,5).map(e=>e.v),...hall.slice(-4)];
       const seen=new Set(),vals=[];
       for(const v of candidates){const s=sig(v);if(seen.has(s))continue;seen.add(s);vals.push(validate(v));}
       vals.sort((a,b)=>b.combined-a.combined);if(vals[0]&&(!bestValidated||vals[0].combined>bestValidated.combined))bestValidated=vals[0];
@@ -209,9 +209,9 @@ optimizeHybrid = async function(maxGenerations=1000){
     }
   }
 
-  const finalistCandidates=[bestValidated.v,bestTrain.v,...population.slice(0,12).map(e=>e.v),...[...archive.values()].sort((a,b)=>b.score-a.score).slice(0,16).map(e=>e.v),...hall.slice(-10)];
+  const finalistCandidates=[bestValidated.v,bestTrain.v,...population.slice(0,8).map(e=>e.v),...[...archive.values()].sort((a,b)=>b.score-a.score).slice(0,10).map(e=>e.v),...hall.slice(-6)];
   const uniq=[],seenFinal=new Set();for(const v of finalistCandidates){const s=sig(v);if(!seenFinal.has(s)){seenFinal.add(s);uniq.push(v);}}
-  const testSeeds=Array.from({length:FINAL},(_,i)=>1600000000+i*17011),testOpp=[...baselineProfiles,...uniq.slice(0,12)];
+  const testSeeds=Array.from({length:FINAL},(_,i)=>1600000000+i*17011),testOpp=[...baselineProfiles,...uniq.slice(0,8)];
   const rf=uniq.map(v=>({v,...scoreAgainst(v,testOpp,testSeeds,FINAL)})).sort((a,b)=>b.score-a.score);
   const first=rf[0]?.v||bestValidated.v,second=rf[1]?.v||population[1]?.v||first;
   programs.A=repair(first.p);programs.B=repair(second.p);
