@@ -50,7 +50,7 @@
     m.games++;if(won)m.wins++;else if(lost)m.losses++;else m.draws++;if(r.resolved)m.resolved++;
     m.margin+=candidateIsA?(r.a-r.b):(r.b-r.a);
     const attacks=Number(ac.attacks??((st.shoot||0)+(st.mine||0)+(st.killer||0))),damage=Number(ac.damage??st.damage??0);
-    m.attacks+=attacks;m.damage+=damage;m.translation+=Number(ac.translation??((st.move||0)+(st.evade||0)));m.orientation+=Number(ac.orientation??((st.turn||0)+(st.aim||0));
+    m.attacks+=attacks;m.damage+=damage;m.translation+=Number(ac.translation??((st.move||0)+(st.evade||0)));m.orientation+=Number(ac.orientation??((st.turn||0)+(st.aim||0)));
     if(ac.nonCombat===true||(attacks===0&&damage===0))m.nonCombatGames++;if(attacks>0)m.attackGames++;if(damage>0)m.damageGames++;
     if((st.narrowChecks||0)+(st.mediumChecks||0)+(st.wideChecks||0)>0)m.fovConditionGames++;
     m.visited+=Number(st.visitedCount||0);m.dist+=Number(st.dist||0);m.ticks+=Number(st.ticks||0);m.mineUses+=Number(st.mine||0);
