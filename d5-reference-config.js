@@ -1,7 +1,10 @@
 // Shared reference definition for D4/D5 and production reproducibility checks.
 (function installD5ReferenceConfig(){
-  const VERSION='d5-reference-config-v0.1';
+  const VERSION='d5-reference-config-v0.2';
   const MASTER_SEEDS=[26082407,26082507,26082607,26082707,26082807];
+  // The user actually completed the 3-run D5 reproducibility check with these seeds.
+  // Production sampling is therefore limited to this validated subset.
+  const VALIDATED_MASTER_SEEDS=MASTER_SEEDS.slice(0,3);
   const VALIDATED={cpuClass:'standard',cpuLimit:18,cpuDecisionMs:120,chassisA:'standard',chassisB:'standard',generations:20};
   const clone=p=>p.map(c=>c?{...c}:null);
 
@@ -11,7 +14,7 @@
   function baselineTail(){return[seedA(),seedB(),seedA(),seedB(),seedC()].map(clone);}
 
   const BASELINE_MARKER="function baselines(){const ps=[activeSeed(),handDesignedChampion('A'),handDesignedChampion('B'),...strategicSeeds()],ws=[['rifle','rapid'],['rifle','mine'],['heavy','rapid'],['burst','killer'],['rapid','mine'],['heavy','killer']];return ps.map((p,i)=>({id:'base-'+i,program:clone(p),hash:hash(p),weapons:ws[i%ws.length].slice(),cluster:null,eval:null,engagement:null}));}";
-  const BASELINE_REPLACEMENT="function baselines(){const ref=window.__D5ReferenceConfig;if(!ref||ref.VERSION!=='d5-reference-config-v0.1')throw new Error('D5 reference config missing');const ps=[activeSeed(),...ref.baselineTail()],ws=[['rifle','rapid'],['rifle','mine'],['heavy','rapid'],['burst','killer'],['rapid','mine'],['heavy','killer']];return ps.map((p,i)=>({id:'base-'+i,program:clone(p),hash:hash(p),weapons:ws[i%ws.length].slice(),cluster:null,eval:null,engagement:null}));}";
+  const BASELINE_REPLACEMENT="function baselines(){const ref=window.__D5ReferenceConfig;if(!ref||!String(ref.VERSION||'').startsWith('d5-reference-config-v0.'))throw new Error('D5 reference config missing');const ps=[activeSeed(),...ref.baselineTail()],ws=[['rifle','rapid'],['rifle','mine'],['heavy','rapid'],['burst','killer'],['rapid','mine'],['heavy','killer']];return ps.map((p,i)=>({id:'base-'+i,program:clone(p),hash:hash(p),weapons:ws[i%ws.length].slice(),cluster:null,eval:null,engagement:null}));}";
   const MASTER_MARKER='const r=rngFactory(26082407),bs=baselines();';
   const VERSION_MARKER="const VERSION='phase-d4-checkpoint-test-v0.1';";
 
@@ -22,5 +25,5 @@
     return src.replace(VERSION_MARKER,`const VERSION='${label}';`).replace(BASELINE_MARKER,BASELINE_REPLACEMENT).replace(MASTER_MARKER,`const r=rngFactory(${seed}),bs=baselines();`);
   }
 
-  window.__D5ReferenceConfig={VERSION,MASTER_SEEDS:MASTER_SEEDS.slice(),VALIDATED:{...VALIDATED},defaultMasterSeed:MASTER_SEEDS[0],seedA,seedB,seedC,baselineTail,patchD4Source};
+  window.__D5ReferenceConfig={VERSION,MASTER_SEEDS:MASTER_SEEDS.slice(),VALIDATED_MASTER_SEEDS:VALIDATED_MASTER_SEEDS.slice(),VALIDATED:{...VALIDATED},defaultMasterSeed:MASTER_SEEDS[0],seedA,seedB,seedC,baselineTail,patchD4Source};
 })();
