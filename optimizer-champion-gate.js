@@ -1,10 +1,10 @@
 // Production optimizer integration: grid-native D4 pipeline generalized to the current game setup.
 // The D5-verified algorithm/baseline definition is kept, while CPU and chassis come from the UI.
-const __PRODUCTION_OPTIMIZER_VERSION='grid-native-d4-production-v5-current-config';
+const __PRODUCTION_OPTIMIZER_VERSION='grid-native-d4-production-v6-current-config-final-install';
 
 async function __loadOptimizerModule(path,ready){
   if(ready())return;
-  const src=await fetch(path+'?v=20260824-prod-current-01',{cache:'no-store'}).then(r=>{if(!r.ok)throw new Error(path+' '+r.status);return r.text();});
+  const src=await fetch(path+'?v=20260824-prod-current-02',{cache:'no-store'}).then(r=>{if(!r.ok)throw new Error(path+' '+r.status);return r.text();});
   (0,eval)(src);
   if(!ready())throw new Error(path+' initialization failed');
 }
@@ -22,6 +22,12 @@ function __productionConfigSnapshot(){
   const ca=(typeof chassisBySide!=='undefined'&&CHASSIS_TYPES?.[chassisBySide.A])?chassisBySide.A:'standard';
   const cb=(typeof chassisBySide!=='undefined'&&CHASSIS_TYPES?.[chassisBySide.B])?chassisBySide.B:'standard';
   return{cpuClass:cpu,cpuLimit:typeof cpuChipLimit==='function'?cpuChipLimit():18,cpuDecisionMs:typeof cpuDecisionMs==='function'?cpuDecisionMs():120,chassisA:ca,chassisB:cb};
+}
+
+function __productionProgramHash(p){
+  let h=2166136261>>>0,s=JSON.stringify(p);
+  for(let i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619)>>>0;}
+  return h.toString(16).padStart(8,'0');
 }
 
 // D4 was originally symmetric in chassis. For production, preserve the selected A/B chassis.
@@ -65,10 +71,9 @@ optimizeHybrid=async function(maxGenerations=20){
     const phaseSummary={set textContent(v){evoDetail.textContent=v;},get textContent(){return evoDetail.textContent;}};
     const phaseProgress={style:evoProgress.style};
     const phaseReport={textContent:''};
-    // Kept only because D4's report/UI references this selector. Actual A/B assignment is patched below.
     const phaseChassisSel={get value(){return config.chassisA;}};
     const seed=__chooseProductionMasterSeed(ref);
-    let src=await fetch('./phase-d4-evolution.js?v=20260824-prod-current-01',{cache:'no-store'}).then(r=>{if(!r.ok)throw new Error('phase-d4-evolution.js '+r.status);return r.text();});
+    let src=await fetch('./phase-d4-evolution.js?v=20260824-prod-current-02',{cache:'no-store'}).then(r=>{if(!r.ok)throw new Error('phase-d4-evolution.js '+r.status);return r.text();});
     src=ref.patchD4Source(src,seed,`${__PRODUCTION_OPTIMIZER_VERSION}-seed-${seed}`);
     src=__patchD4ForCurrentChassis(src,config.chassisA,config.chassisB);
     window.__phaseD4=null;
@@ -80,8 +85,9 @@ optimizeHybrid=async function(maxGenerations=20){
     const snap=report.selectedCheckpoint?.champion?.snapshot,val=report.selectedCheckpoint?.champion?.metrics,test=report.finalTest?.metrics;
     if(!snap?.program||!Array.isArray(snap.weapons)||snap.weapons.length<2)throw new Error('selected checkpoint is incomplete');
 
-    programs.A=cloneProgram(snap.program);
-    weaponA1Sel.value=snap.weapons[0];weaponA2Sel.value=snap.weapons[1];
+    const selectedProgram=cloneProgram(snap.program),selectedWeapons=snap.weapons.slice();
+    programs.A=cloneProgram(selectedProgram);
+    weaponA1Sel.value=selectedWeapons[0];weaponA2Sel.value=selectedWeapons[1];
     editSide='A';selectedCell=1;
     if(typeof resetWorld==='function')resetWorld();
     renderProgram();
@@ -95,6 +101,20 @@ optimizeHybrid=async function(maxGenerations=20){
     const meta={optimizer:__PRODUCTION_OPTIMIZER_VERSION,referenceConfigVersion:ref.VERSION,masterSeed:seed,masterSeedPool:(ref.VALIDATED_MASTER_SEEDS||ref.MASTER_SEEDS||[]).slice(0,3),searchConfig:{...config,generations},selectedGeneration:report.selectedCheckpoint.generation,validationWinRate:val?.winRate||0,testWinRate:test?.winRate||0,testAvgDamage:test?.avgDamage||0,checkpointHash:snap.hash,weapons:snap.weapons.slice(),audit:{invalidToEvaluation:report.counters?.invalidToEvaluation,runtimeHashViolations:report.counters?.runtimeHashViolations,programHashViolations:report.counters?.programHashViolations,eliteHashViolations:report.counters?.eliteHashViolations,checkpointHashViolations:report.counters?.checkpointHashViolations,testEvaluations:report.counters?.testEvaluations}};
     if(typeof saveOptimizedResult==='function')saveOptimizedResult(meta);
     window.__lastProductionD4Report=report;
+
+    // cpu-rules wraps optimizeHybrid after this function is installed. Re-apply the exact selected
+    // checkpoint on the next task so no outer compatibility wrapper can silently replace it.
+    setTimeout(()=>{
+      programs.A=cloneProgram(selectedProgram);
+      weaponA1Sel.value=selectedWeapons[0];weaponA2Sel.value=selectedWeapons[1];
+      editSide='A';selectedCell=1;
+      if(state?.A){state.A.pc=0;state.A.acc=0;}
+      renderProgram();
+      const appliedHash=__productionProgramHash(programs.A),ok=appliedHash===snap.hash;
+      evoDetail.textContent+=` / 反映hash ${appliedHash}${ok?' 一致':' 不一致'}`;
+      statusEl.textContent=ok?'探索結果を自機へ反映しました。6×6盤面・武器設定ともcheckpointと一致しています。':`探索結果の反映hashが不一致です：checkpoint ${snap.hash} / 盤面 ${appliedHash}`;
+      window.__lastProductionInstallCheck={checkpointHash:snap.hash,appliedHash,match:ok,weapons:selectedWeapons.slice()};
+    },0);
     return report;
   }catch(err){
     console.error(err);statusEl.textContent='探索エラー：'+(err?.message||err);evoDetail.textContent='探索エラー：'+(err?.message||err)+' / 本番AIは変更していません。';throw err;
