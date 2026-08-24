@@ -1,11 +1,10 @@
 // Production optimizer integration: validated grid-native D4 pipeline.
 // Keeps the old advanced optimizer helpers/persistence, but replaces optimizeHybrid at runtime.
-// Structural evolution and the D4 engine are loaded lazily on first search so the stable battle core stays untouched.
-const __PRODUCTION_OPTIMIZER_VERSION='grid-native-d4-production-v1';
+const __PRODUCTION_OPTIMIZER_VERSION='grid-native-d4-production-v2';
 
 async function __loadOptimizerModule(path,ready){
   if(ready())return;
-  const src=await fetch(path+'?v=20260824-prod-d4-01',{cache:'no-store'}).then(r=>{if(!r.ok)throw new Error(path+' '+r.status);return r.text();});
+  const src=await fetch(path+'?v=20260824-prod-d4-02',{cache:'no-store'}).then(r=>{if(!r.ok)throw new Error(path+' '+r.status);return r.text();});
   (0,eval)(src);
   if(!ready())throw new Error(path+' initialization failed');
 }
@@ -24,28 +23,33 @@ optimizeHybrid=async function(maxGenerations=20){
   evoDetail.textContent=requested!==testedGenerations?'安全のため、D5で検証済みの20世代構成で実行します。':'構造制約 → Engagement制約 → Strength → Validation checkpoint の順で探索します。';
   await new Promise(r=>requestAnimationFrame(()=>r()));
 
+  const bridgeKeys=['cloneProgram','handDesignedChampion','strategicSeeds','trimProgramToCpu','simulateBattleWeaponAware','chassisBySide','cpuChipLimit','cpuDecisionPeriod','phaseStatus','phaseSummary','phaseProgress','phaseReport','phaseChassisSel'];
+  const previous=new Map(bridgeKeys.map(k=>[k,{had:Object.prototype.hasOwnProperty.call(window,k),value:window[k]}]));
   try{
     await __loadOptimizerModule('./chip-catalog.js',()=>window.__chipCatalog?.version==='chip-catalog-v0.1');
     await __loadOptimizerModule('./structural-evolution.js',()=>window.__structuralEvolution?.VERSION==='grid-native-structure-v0.4-metadata');
     if(!simulateBattleWeaponAware?.__authoritativeMeasured)throw new Error('authoritative-measured-v2 simulator is not active');
 
-    const phaseStatus={
-      set textContent(v){statusEl.textContent=v;},
-      get textContent(){return statusEl.textContent;}
-    };
-    const phaseSummary={
-      set textContent(v){evoDetail.textContent=v;},
-      get textContent(){return evoDetail.textContent;}
-    };
+    const phaseStatus={set textContent(v){statusEl.textContent=v;},get textContent(){return statusEl.textContent;}};
+    const phaseSummary={set textContent(v){evoDetail.textContent=v;},get textContent(){return evoDetail.textContent;}};
     const phaseProgress={style:evoProgress.style};
     const phaseReport={textContent:''};
     const phaseChassisSel={get value(){return chassisBySide?.A||'standard';}};
+
+    // D4 was validated as a standalone script. In production the game core lives inside a closure,
+    // so expose only the exact runtime dependencies D4 needs while it is running.
+    Object.assign(window,{cloneProgram,handDesignedChampion,strategicSeeds,trimProgramToCpu,simulateBattleWeaponAware,chassisBySide,cpuChipLimit,cpuDecisionPeriod,phaseStatus,phaseSummary,phaseProgress,phaseReport,phaseChassisSel});
+
+    const required=['cloneProgram','handDesignedChampion','strategicSeeds','trimProgramToCpu','simulateBattleWeaponAware','chassisBySide','cpuChipLimit','cpuDecisionPeriod','phaseStatus','phaseSummary','phaseProgress','phaseReport','phaseChassisSel'];
+    const missing=required.filter(k=>typeof window[k]==='undefined'||window[k]===null);
+    if(missing.length)throw new Error('D4 production bridge missing: '+missing.join(', '));
+
     const seed=__prodMasterSeed();
-    let src=await fetch('./phase-d4-evolution.js?v=20260824-prod-d4-01',{cache:'no-store'}).then(r=>{if(!r.ok)throw new Error('phase-d4-evolution.js '+r.status);return r.text();});
+    let src=await fetch('./phase-d4-evolution.js?v=20260824-prod-d4-02',{cache:'no-store'}).then(r=>{if(!r.ok)throw new Error('phase-d4-evolution.js '+r.status);return r.text();});
     if(!src.includes("phase-d4-checkpoint-test-v0.1")||!src.includes('const r=rngFactory(26082407),bs=baselines();'))throw new Error('D4 engine source mismatch');
     src=src.replace("const VERSION='phase-d4-checkpoint-test-v0.1';",`const VERSION='${__PRODUCTION_OPTIMIZER_VERSION}-seed-${seed}';`).replace('const r=rngFactory(26082407),bs=baselines();',`const r=rngFactory(${seed}),bs=baselines();`);
     window.__phaseD4=null;
-    eval(src);
+    (0,eval)(src);
     if(!window.__phaseD4)throw new Error('D4 production engine install failed');
 
     const report=await window.__phaseD4.run();
@@ -69,16 +73,18 @@ optimizeHybrid=async function(maxGenerations=20){
     evoDetail.textContent=`完了：Validation ${(100*(val?.winRate||0)).toFixed(1)}% / 完全未使用Test ${(100*(test?.winRate||0)).toFixed(1)}% / 平均Damage ${(test?.avgDamage||0).toFixed(2)} / ${snap.weapons.join(' + ')} / seed ${seed}`;
     statusEl.textContent='強さ優先探索完了。検証済みD4方式で選んだcheckpointを自機へ適用しました。';
 
-    const meta={optimizer:__PRODUCTION_OPTIMIZER_VERSION,masterSeed:seed,selectedGeneration:report.selectedCheckpoint.generation,validationWinRate:val?.winRate||0,testWinRate:test?.winRate||0,testAvgDamage:test?.avgDamage||0,checkpointHash:snap.hash,weapons:snap.weapons.slice(),audit:{invalidToEvaluation:report.counters?.invalidToEvaluation, runtimeHashViolations:report.counters?.runtimeHashViolations, programHashViolations:report.counters?.programHashViolations, eliteHashViolations:report.counters?.eliteHashViolations, checkpointHashViolations:report.counters?.checkpointHashViolations, testEvaluations:report.counters?.testEvaluations}};
+    const meta={optimizer:__PRODUCTION_OPTIMIZER_VERSION,masterSeed:seed,selectedGeneration:report.selectedCheckpoint.generation,validationWinRate:val?.winRate||0,testWinRate:test?.winRate||0,testAvgDamage:test?.avgDamage||0,checkpointHash:snap.hash,weapons:snap.weapons.slice(),audit:{invalidToEvaluation:report.counters?.invalidToEvaluation,runtimeHashViolations:report.counters?.runtimeHashViolations,programHashViolations:report.counters?.programHashViolations,eliteHashViolations:report.counters?.eliteHashViolations,checkpointHashViolations:report.counters?.checkpointHashViolations,testEvaluations:report.counters?.testEvaluations}};
     if(typeof saveOptimizedResult==='function')saveOptimizedResult(meta);
     window.__lastProductionD4Report=report;
     return report;
   }catch(err){
     console.error(err);
-    statusEl.textContent='探索エラー：'+(err?.message||err);
-    evoDetail.textContent='本番AIは変更していません。エラー内容を確認してください。';
+    const msg=err?.message||String(err);
+    statusEl.textContent='探索エラー：'+msg;
+    evoDetail.textContent='探索エラー：'+msg+' / 本番AIは変更していません。';
     throw err;
   }finally{
+    for(const [k,p] of previous){if(p.had)window[k]=p.value;else try{delete window[k];}catch(_){window[k]=undefined;}}
     optimizeBtn.disabled=false;
   }
 };
