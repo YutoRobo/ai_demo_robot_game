@@ -121,6 +121,20 @@
     window.__selectionPressureVersion='wins-resolved-noncombat-v1';
     return src;
   }
+  function renderStructureTelemetry(report){
+    const box=typeof root!=='undefined'?root.querySelector('#structuralTelemetry'):null,body=typeof root!=='undefined'?root.querySelector('#structuralTelemetryBody'):null;
+    const rows=Array.isArray(report?.log)?report.log:[];if(!rows.length)return;
+    const last=rows[rows.length-1]?.structure||{},sel=report?.selectedCheckpoint?.champion?.snapshot?.program?.slice(1).filter(Boolean).length||0,maxEver=Math.max(...rows.map(r=>Number(r.structure?.max||0)));
+    const sample=rows.filter((r,i)=>i===0||i===rows.length-1||r.generation%5===0);
+    const lines=['世代 | 平均 | 最小-最大 | 上位30平均 | 6 / 7-9 / 10-12 / 13-15 / 16-18'];
+    for(const r of sample){const s=r.structure||{},b=s.buckets||{};lines.push(`${String(r.generation).padStart(3)} | ${(s.avg||0).toFixed(1).padStart(4)} | ${String(s.min||0).padStart(2)}-${String(s.max||0).padEnd(2)} | ${(s.top30Avg||0).toFixed(1).padStart(5)} | ${b['6']||0} / ${b['7-9']||0} / ${b['10-12']||0} / ${b['13-15']||0} / ${b['16-18']||0}`);}
+    const totals={};for(const r of rows)for(const [k,v] of Object.entries(r.structure?.operators||{}))totals[k]=(totals[k]||0)+Number(v||0);
+    const opText=['insertActionRepack','insertConditionBranch','removeActionRepack','collapseCondition','subgraphCrossover'].map(k=>`${k}:${totals[k]||0}`).join(' / ');
+    lines.push('',`選出 ${sel}チップ / 最終平均 ${(last.avg||0).toFixed(1)} / 最終最大 ${last.max||0} / 全世代最大 ${maxEver} / 最終上位30平均 ${(last.top30Avg||0).toFixed(1)}`,opText);
+    if(body)body.textContent=lines.join('\n');if(box)box.open=true;
+    window.__lastStructureTelemetry={selectedChipCount:sel,last,maxEver,operatorTotals:totals,rows};
+    if(typeof evoDetail!=='undefined')evoDetail.textContent+=` / 構造: 選出${sel}・最終平均${(last.avg||0).toFixed(1)}・最大${last.max||0}・全世代最大${maxEver}・上位30平均${(last.top30Avg||0).toFixed(1)}`;
+  }
   function installUi(){
     if(typeof root==='undefined'||typeof optimizeBtn==='undefined'||!optimizeBtn||root.querySelector('#structuralSearchParams'))return;
     const section=optimizeBtn.closest('.section');if(!section)return;
@@ -135,6 +149,7 @@
     const row=document.createElement('div');row.style.cssText='display:flex;gap:6px;flex-wrap:wrap;margin-top:8px';
     function presetButton(label,name){const b=document.createElement('button');b.type='button';b.textContent=label;b.addEventListener('click',()=>{current={...PRESETS[name]};save();for(const k of Object.keys(inputs))inputs[k].value=String(current[k]);if(typeof statusEl!=='undefined')statusEl.textContent=`構造探索を「${label}」に設定しました。`;});return b;}
     row.append(presetButton('標準','standard'),presetButton('拡散強め','diffuse'));d.appendChild(row);section.appendChild(d);
+    const td=document.createElement('details');td.id='structuralTelemetry';td.style.cssText='margin-top:9px;padding:8px;border:1px solid rgba(128,128,128,.35);border-radius:10px';const ts=document.createElement('summary');ts.textContent='構造推移';ts.style.cssText='cursor:pointer;font-weight:700';const pre=document.createElement('pre');pre.id='structuralTelemetryBody';pre.textContent='探索後に世代ごとのチップ数分布を表示します。';pre.style.cssText='white-space:pre-wrap;overflow:auto;font:11px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace;margin:7px 0 0';td.append(ts,pre);section.appendChild(td);
   }
   setTimeout(()=>{
     try{
@@ -146,7 +161,7 @@
         window.fetch=async function(input,init){const url=typeof input==='string'?input:(input?.url||'');const res=await oldFetch.call(this,input,init);if(!url.includes('phase-d4-evolution.js'))return res;const text=await res.text();return new Response(patchD4Source(text,p),{status:res.status,statusText:res.statusText,headers:res.headers});};
         try{
           if(typeof evoDetail!=='undefined')evoDetail.textContent=`構造拡散：交叉${p.crossover}% / 複数変異${p.multiRate}% / 挿入重み ${p.insertAction}+${p.insertCondition} / 選抜: 勝利→決着→非戦闘`;
-          return await base(maxGenerations);
+          const report=await base(maxGenerations);renderStructureTelemetry(report);return report;
         }finally{window.fetch=oldFetch;}
       };
       wrapped.__structuralParamWrapped=true;wrapped.__baseOptimize=base;optimizeHybrid=wrapped;
