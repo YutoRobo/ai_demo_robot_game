@@ -1,10 +1,10 @@
 // Production optimizer integration: grid-native D4 pipeline generalized to the current game setup.
 // The D5-verified algorithm/baseline definition is kept, while CPU, chassis and generation count come from the UI.
-const __PRODUCTION_OPTIMIZER_VERSION='grid-native-d4-production-v9-json-program-io';
+const __PRODUCTION_OPTIMIZER_VERSION='grid-native-d4-production-v10-json-copy-paste';
 
 async function __loadOptimizerModule(path,ready){
   if(ready())return;
-  const src=await fetch(path+'?v=20260824-prod-current-05',{cache:'no-store'}).then(r=>{if(!r.ok)throw new Error(path+' '+r.status);return r.text();});
+  const src=await fetch(path+'?v=20260824-prod-current-06',{cache:'no-store'}).then(r=>{if(!r.ok)throw new Error(path+' '+r.status);return r.text();});
   (0,eval)(src);
   if(!ready())throw new Error(path+' initialization failed');
 }
@@ -83,7 +83,7 @@ optimizeHybrid=async function(maxGenerations=20){
     const phaseReport={textContent:''};
     const phaseChassisSel={get value(){return config.chassisA;}};
     const seed=__chooseProductionMasterSeed(ref);
-    let src=await fetch('./phase-d4-evolution.js?v=20260824-prod-current-05',{cache:'no-store'}).then(r=>{if(!r.ok)throw new Error('phase-d4-evolution.js '+r.status);return r.text();});
+    let src=await fetch('./phase-d4-evolution.js?v=20260824-prod-current-06',{cache:'no-store'}).then(r=>{if(!r.ok)throw new Error('phase-d4-evolution.js '+r.status);return r.text();});
     src=ref.patchD4Source(src,seed,`${__PRODUCTION_OPTIMIZER_VERSION}-${generations}g-seed-${seed}`);
     src=__patchD4Generations(src,generations);
     src=__patchD4ForCurrentChassis(src,config.chassisA,config.chassisB);
@@ -132,10 +132,10 @@ optimizeHybrid=async function(maxGenerations=20){
 
 const __AI_JSON_FORMAT='robot-ai-battle-program-v1';
 const __AI_JSON_DIRS=new Set(['U','R','D','L']);
-function __exportSelfAiJson(){
+function __buildSelfAiJsonPayload(){
   const hash=__productionProgramHash(programs.A);
   const report=window.__lastProductionD4Report;
-  const payload={
+  return{
     format:__AI_JSON_FORMAT,
     version:1,
     exportedAt:new Date().toISOString(),
@@ -146,6 +146,9 @@ function __exportSelfAiJson(){
     chassisA:typeof chassisBySide!=='undefined'?chassisBySide.A:'standard',
     source:{optimizer:__PRODUCTION_OPTIMIZER_VERSION,selectedGeneration:report?.selectedCheckpoint?.generation??null,checkpointHash:report?.selectedCheckpoint?.champion?.snapshot?.hash??hash}
   };
+}
+function __exportSelfAiJson(){
+  const payload=__buildSelfAiJsonPayload(),hash=payload.programHash;
   const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');
   const stamp=new Date().toISOString().replace(/[:.]/g,'-');
   a.href=url;a.download=`robot-ai-${hash}-${stamp}.json`;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
@@ -179,9 +182,8 @@ function __validateImportedAiJson(data){
   return{program:cloneProgram(p),weapons,cpuClass:cpu,chassisA:data.chassisA&&CHASSIS_TYPES?.[data.chassisA]?data.chassisA:null,expectedHash:data.programHash||null};
 }
 
-async function __importSelfAiJsonFile(file){
-  if(!file)return;
-  const data=JSON.parse(await file.text()),x=__validateImportedAiJson(data);
+function __applyImportedAiJsonData(data){
+  const x=__validateImportedAiJson(data);
   if(typeof cpuClass!=='undefined')cpuClass=x.cpuClass;
   if(typeof cpuClassSel!=='undefined'&&cpuClassSel)cpuClassSel.value=x.cpuClass;
   try{localStorage.setItem('robot-ai-battle-v1-cpu-class',x.cpuClass);}catch(_e){}
@@ -201,6 +203,24 @@ async function __importSelfAiJsonFile(file){
   if(x.expectedHash&&hash!==x.expectedHash)throw new Error(`読み込みhash不一致：JSON ${x.expectedHash} / 盤面 ${hash}`);
   if(typeof saveOptimizedResult==='function')saveOptimizedResult({importedJson:true,checkpointHash:hash,weapons:x.weapons.slice(),cpuClass:x.cpuClass,chassisA:x.chassisA});
   statusEl.textContent=`JSONから自機AIを読み込みました。program hash ${hash}`;
+  return hash;
+}
+async function __importSelfAiJsonFile(file){
+  if(!file)return;
+  return __applyImportedAiJsonData(JSON.parse(await file.text()));
+}
+function __importSelfAiJsonText(text){
+  if(!String(text||'').trim())throw new Error('JSONを貼り付けてください');
+  return __applyImportedAiJsonData(JSON.parse(text));
+}
+async function __copyTextToClipboard(text,textarea){
+  try{
+    if(navigator.clipboard&&window.isSecureContext){await navigator.clipboard.writeText(text);return true;}
+  }catch(_e){}
+  try{
+    textarea.focus();textarea.select();textarea.setSelectionRange(0,textarea.value.length);
+    return document.execCommand('copy');
+  }catch(_e){return false;}
 }
 
 (function __installProductionD4Ui(){
@@ -216,14 +236,23 @@ async function __importSelfAiJsonFile(file){
     if(typeof optimizeBtn!=='undefined'&&optimizeBtn){optimizeBtn.textContent='強さ優先探索';optimizeBtn.title='現在選択中のCPU・自機・敵機条件と指定世代数で探索';}
     const section=optimizeBtn?.closest('.section');
     if(section&&!root.querySelector('#aiJsonIo')){
-      const box=document.createElement('div');box.id='aiJsonIo';box.style.cssText='display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;align-items:center';
-      const save=document.createElement('button');save.type='button';save.textContent='自機JSON保存';save.addEventListener('click',__exportSelfAiJson);
-      const load=document.createElement('button');load.type='button';load.textContent='JSON読込';
+      const box=document.createElement('div');box.id='aiJsonIo';box.style.cssText='display:grid;gap:8px;margin-top:8px';
+      const buttons=document.createElement('div');buttons.style.cssText='display:flex;gap:8px;flex-wrap:wrap;align-items:center';
+      const show=document.createElement('button');show.type='button';show.textContent='JSONを表示';
+      const copy=document.createElement('button');copy.type='button';copy.textContent='JSONをコピー';
+      const apply=document.createElement('button');apply.type='button';apply.textContent='貼付JSONを読込';
+      const textarea=document.createElement('textarea');textarea.id='aiJsonText';textarea.rows=9;textarea.placeholder='ここにJSONを表示／貼り付け';textarea.spellcheck=false;textarea.style.cssText='width:100%;min-height:170px;resize:vertical;font:12px/1.35 ui-monospace,SFMono-Regular,Consolas,monospace;border:1px solid #c9ced6;border-radius:10px;padding:9px;background:inherit;color:inherit';
+      show.addEventListener('click',()=>{const payload=__buildSelfAiJsonPayload();textarea.value=JSON.stringify(payload,null,2);statusEl.textContent=`自機AIのJSONを表示しました。program hash ${payload.programHash}`;});
+      copy.addEventListener('click',async()=>{if(!textarea.value.trim()){const payload=__buildSelfAiJsonPayload();textarea.value=JSON.stringify(payload,null,2);}const ok=await __copyTextToClipboard(textarea.value,textarea);statusEl.textContent=ok?'JSONをクリップボードへコピーしました。別端末やメモへ貼り付けできます。':'自動コピーできませんでした。JSON欄を長押ししてコピーしてください。';});
+      apply.addEventListener('click',()=>{try{const hash=__importSelfAiJsonText(textarea.value);statusEl.textContent=`貼り付けJSONを読み込みました。program hash ${hash}`;}catch(e){console.error(e);statusEl.textContent='JSON読込エラー：'+(e?.message||e);}});
+      const fileRow=document.createElement('div');fileRow.style.cssText='display:flex;gap:8px;flex-wrap:wrap;align-items:center';
+      const save=document.createElement('button');save.type='button';save.textContent='ファイル保存';save.addEventListener('click',__exportSelfAiJson);
+      const load=document.createElement('button');load.type='button';load.textContent='ファイル読込';
       const input=document.createElement('input');input.type='file';input.accept='application/json,.json';input.style.display='none';
       load.addEventListener('click',()=>{input.value='';input.click();});
       input.addEventListener('change',async()=>{try{await __importSelfAiJsonFile(input.files?.[0]);}catch(e){console.error(e);statusEl.textContent='JSON読込エラー：'+(e?.message||e);}});
-      const note=document.createElement('span');note.className='mini';note.textContent='探索後の自機チップ配列・武器・CPU・機体を端末へ保存／復元';
-      box.append(save,load,input,note);section.appendChild(box);
+      const note=document.createElement('span');note.className='mini';note.textContent='保存できない端末では「JSONを表示」→「JSONをコピー」。復元時は貼り付けて「貼付JSONを読込」。';
+      buttons.append(show,copy,apply);fileRow.append(save,load,input);box.append(buttons,textarea,fileRow,note);section.appendChild(box);
     }
   }catch(e){console.warn('production D4 UI setup failed',e);}
 })();
