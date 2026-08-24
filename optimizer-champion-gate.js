@@ -2,10 +2,11 @@
 // Keeps the old advanced optimizer helpers/persistence, but replaces optimizeHybrid at runtime.
 // Reference-verification mode intentionally pins the exact D5 configuration and master seed.
 const __PRODUCTION_OPTIMIZER_VERSION='grid-native-d4-production-v3-reference';
+const __D5_PRODUCTION_REFERENCE_KEY='robot-ai-battle-d5-reference-production';
 
 async function __loadOptimizerModule(path,ready){
   if(ready())return;
-  const src=await fetch(path+'?v=20260824-prod-d5ref-01',{cache:'no-store'}).then(r=>{if(!r.ok)throw new Error(path+' '+r.status);return r.text();});
+  const src=await fetch(path+'?v=20260824-prod-d5ref-02',{cache:'no-store'}).then(r=>{if(!r.ok)throw new Error(path+' '+r.status);return r.text();});
   (0,eval)(src);
   if(!ready())throw new Error(path+' initialization failed');
 }
@@ -59,7 +60,7 @@ optimizeHybrid=async function(maxGenerations=20){
     const phaseReport={textContent:''};
     const phaseChassisSel={get value(){return ref.VALIDATED.chassisA;}};
     const seed=ref.defaultMasterSeed;
-    let src=await fetch('./phase-d4-evolution.js?v=20260824-prod-d5ref-01',{cache:'no-store'}).then(r=>{if(!r.ok)throw new Error('phase-d4-evolution.js '+r.status);return r.text();});
+    let src=await fetch('./phase-d4-evolution.js?v=20260824-prod-d5ref-02',{cache:'no-store'}).then(r=>{if(!r.ok)throw new Error('phase-d4-evolution.js '+r.status);return r.text();});
     src=ref.patchD4Source(src,seed,`${__PRODUCTION_OPTIMIZER_VERSION}-seed-${seed}`);
     window.__phaseD4=null;
     eval(src);
@@ -88,6 +89,7 @@ optimizeHybrid=async function(maxGenerations=20){
 
     const meta={optimizer:__PRODUCTION_OPTIMIZER_VERSION,referenceConfigVersion:ref.VERSION,masterSeed:seed,validatedConfig:{...ref.VALIDATED},selectedGeneration:report.selectedCheckpoint.generation,validationWinRate:val?.winRate||0,testWinRate:test?.winRate||0,testAvgDamage:test?.avgDamage||0,checkpointHash:snap.hash,weapons:snap.weapons.slice(),audit:{invalidToEvaluation:report.counters?.invalidToEvaluation,runtimeHashViolations:report.counters?.runtimeHashViolations,programHashViolations:report.counters?.programHashViolations,eliteHashViolations:report.counters?.eliteHashViolations,checkpointHashViolations:report.counters?.checkpointHashViolations,testEvaluations:report.counters?.testEvaluations}};
     if(typeof saveOptimizedResult==='function')saveOptimizedResult(meta);
+    try{localStorage.setItem(__D5_PRODUCTION_REFERENCE_KEY,JSON.stringify({...meta,savedAt:new Date().toISOString()}));}catch(e){throw new Error('D5 reference result save failed: '+(e?.message||e));}
     window.__lastProductionD4Report=report;
     return report;
   }catch(err){
