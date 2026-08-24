@@ -1,6 +1,6 @@
 // Shared reference definition for D4/D5 and production reproducibility checks.
 (function installD5ReferenceConfig(){
-  const VERSION='d5-reference-config-v0.3';
+  const VERSION='d5-reference-config-v0.2';
   const MASTER_SEEDS=[26082407,26082507,26082607,26082707,26082807];
   // The user actually completed the 3-run D5 reproducibility check with these seeds.
   // Production sampling is therefore limited to this validated subset.
