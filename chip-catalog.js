@@ -78,19 +78,19 @@
 })();
 
 // Search-parameter UI and structural-diffusion wrapper.
-// Selection criteria remain untouched; only candidate-generation pressure changes.
+// Candidate-generation pressure is configurable; production selection prefers decisive combat after wins.
 (function installStructuralSearchParameters(){
   const KEY='robot-ai-battle-v1-structural-search-params';
   const PRESETS={
     standard:{crossover:20,multiRate:0,multiExtra:1,replaceAction:20,replaceCondition:16,insertAction:16,insertCondition:22,removeAction:10,collapseCondition:6,weaponMutation:10},
-    diffuse:{crossover:30,multiRate:35,multiExtra:2,replaceAction:13,replaceCondition:12,insertAction:24,insertCondition:28,removeAction:5,collapseCondition:3,weaponMutation:8}
+    diffuse:{crossover:25,multiRate:45,multiExtra:2,replaceAction:10,replaceCondition:10,insertAction:28,insertCondition:32,removeAction:4,collapseCondition:2,weaponMutation:8}
   };
   let current={...PRESETS.diffuse};
   try{const saved=JSON.parse(localStorage.getItem(KEY)||'null');if(saved&&typeof saved==='object')current={...current,...saved};}catch(_e){}
   const clamp=(v,lo,hi,d)=>Math.max(lo,Math.min(hi,Number.isFinite(Number(v))?Number(v):d));
   function normalized(){return{
-    crossover:clamp(current.crossover,0,80,30),multiRate:clamp(current.multiRate,0,100,35),multiExtra:Math.round(clamp(current.multiExtra,1,4,2)),
-    replaceAction:clamp(current.replaceAction,0,100,13),replaceCondition:clamp(current.replaceCondition,0,100,12),insertAction:clamp(current.insertAction,0,100,24),insertCondition:clamp(current.insertCondition,0,100,28),removeAction:clamp(current.removeAction,0,100,5),collapseCondition:clamp(current.collapseCondition,0,100,3),weaponMutation:clamp(current.weaponMutation,0,100,8)
+    crossover:clamp(current.crossover,0,80,25),multiRate:clamp(current.multiRate,0,100,45),multiExtra:Math.round(clamp(current.multiExtra,1,4,2)),
+    replaceAction:clamp(current.replaceAction,0,100,10),replaceCondition:clamp(current.replaceCondition,0,100,10),insertAction:clamp(current.insertAction,0,100,28),insertCondition:clamp(current.insertCondition,0,100,32),removeAction:clamp(current.removeAction,0,100,4),collapseCondition:clamp(current.collapseCondition,0,100,2),weaponMutation:clamp(current.weaponMutation,0,100,8)
   };}
   function save(){current=normalized();try{localStorage.setItem(KEY,JSON.stringify(current));}catch(_e){}window.__structuralSearchParams={...current};}
   save();
@@ -110,6 +110,15 @@
       const replacement=`function mutate(p,r,g){let prog=p.program,w=p.weapons.slice(),ops=[];if(r()<.15){w[Math.floor(r()*2)]=pick(WEAPONS,r);ops.push('weaponProfileMutation');}else{const steps=1+(r()<${mr}?1+Math.floor(r()*${mx}):0);for(let z=0;z<steps;z++){const m=E().mutateStructured(prog,r);prog=m.program;ops.push(m.operator);}}return ind(prog,w,ops.join('+')||'mutation',[p.id],g);}`;
       src=src.replace(mutateMarker,replacement);
     }
+    const strongerMarker="function stronger(a,b,key='eval'){if(!b)return true;if(!a)return false;const ec=engagementCompare(a,b);if(ec)return ec>0;const A=a[key],B=b[key];if(!B)return true;if(!A)return false;for(const k of ['wins','damage','resolved','margin'])if((A[k]||0)!==(B[k]||0))return (A[k]||0)>(B[k]||0);return a.hash<b.hash;}";
+    const strongerReplacement="function stronger(a,b,key='eval'){if(!b)return true;if(!a)return false;const ec=engagementCompare(a,b);if(ec)return ec>0;const A=a[key],B=b[key];if(!B)return true;if(!A)return false;if((A.wins||0)!==(B.wins||0))return (A.wins||0)>(B.wins||0);if((A.resolved||0)!==(B.resolved||0))return (A.resolved||0)>(B.resolved||0);if((A.nonCombatGames||0)!==(B.nonCombatGames||0))return (A.nonCombatGames||0)<(B.nonCombatGames||0);for(const k of ['damage','margin'])if((A[k]||0)!==(B[k]||0))return (A[k]||0)>(B[k]||0);return a.hash<b.hash;}";
+    if(!src.includes(strongerMarker))throw new Error('D4 stronger selection marker mismatch');
+    src=src.replace(strongerMarker,strongerReplacement);
+    const validationMarker="function validationBetter(A,B){if(!B)return true;for(const k of ['wins','damage','resolved','margin'])if((A.metrics[k]||0)!==(B.metrics[k]||0))return (A.metrics[k]||0)>(B.metrics[k]||0);return A.snapshot.hash<B.snapshot.hash;}";
+    const validationReplacement="function validationBetter(A,B){if(!B)return true;const a=A.metrics,b=B.metrics;if((a.wins||0)!==(b.wins||0))return (a.wins||0)>(b.wins||0);if((a.resolved||0)!==(b.resolved||0))return (a.resolved||0)>(b.resolved||0);if((a.nonCombatGames||0)!==(b.nonCombatGames||0))return (a.nonCombatGames||0)<(b.nonCombatGames||0);for(const k of ['damage','margin'])if((a[k]||0)!==(b[k]||0))return (a[k]||0)>(b[k]||0);return A.snapshot.hash<B.snapshot.hash;}";
+    if(!src.includes(validationMarker))throw new Error('D4 validation selection marker mismatch');
+    src=src.replace(validationMarker,validationReplacement);
+    window.__selectionPressureVersion='wins-resolved-noncombat-v1';
     return src;
   }
   function installUi(){
@@ -117,7 +126,7 @@
     const section=optimizeBtn.closest('.section');if(!section)return;
     const d=document.createElement('details');d.id='structuralSearchParams';d.style.cssText='margin-top:9px;padding:8px;border:1px solid rgba(128,128,128,.35);border-radius:10px';
     const s=document.createElement('summary');s.textContent='構造探索パラメータ';s.style.cssText='cursor:pointer;font-weight:700';d.appendChild(s);
-    const note=document.createElement('div');note.className='mini';note.style.margin='6px 0';note.textContent='選択評価は変えず、候補生成の広がりだけを調整します。標準は従来値、拡散強めは挿入・交叉・連続変異を増やします。';d.appendChild(note);
+    const note=document.createElement('div');note.className='mini';note.style.margin='6px 0';note.textContent='候補生成の広がりを調整します。選抜は勝利を最優先し、同勝数なら決着が多く、非戦闘が少ない個体を優先します。';d.appendChild(note);
     const grid=document.createElement('div');grid.style.cssText='display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px';
     const defs=[['crossover','交叉率 %',0,80,5],['multiRate','複数変異率 %',0,100,5],['multiExtra','追加変異 最大',1,4,1],['insertAction','Action挿入 重み',0,100,1],['insertCondition','条件分岐挿入 重み',0,100,1],['removeAction','Action削除 重み',0,100,1],['collapseCondition','条件縮約 重み',0,100,1],['replaceAction','Action置換 重み',0,100,1],['replaceCondition','条件置換 重み',0,100,1],['weaponMutation','武器チップ変異 重み',0,100,1]];
     const inputs={};
@@ -136,7 +145,7 @@
         save();applyStructuralWeights();const p=normalized(),oldFetch=window.fetch;
         window.fetch=async function(input,init){const url=typeof input==='string'?input:(input?.url||'');const res=await oldFetch.call(this,input,init);if(!url.includes('phase-d4-evolution.js'))return res;const text=await res.text();return new Response(patchD4Source(text,p),{status:res.status,statusText:res.statusText,headers:res.headers});};
         try{
-          if(typeof evoDetail!=='undefined')evoDetail.textContent=`構造拡散：交叉${p.crossover}% / 複数変異${p.multiRate}% / 挿入重み ${p.insertAction}+${p.insertCondition}`;
+          if(typeof evoDetail!=='undefined')evoDetail.textContent=`構造拡散：交叉${p.crossover}% / 複数変異${p.multiRate}% / 挿入重み ${p.insertAction}+${p.insertCondition} / 選抜: 勝利→決着→非戦闘`;
           return await base(maxGenerations);
         }finally{window.fetch=oldFetch;}
       };
