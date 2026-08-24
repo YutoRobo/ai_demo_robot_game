@@ -1,10 +1,10 @@
 // Production optimizer integration: grid-native D4 pipeline generalized to the current game setup.
 // The D5-verified algorithm/baseline definition is kept, while CPU, chassis and generation count come from the UI.
-const __PRODUCTION_OPTIMIZER_VERSION='grid-native-d4-production-v8-generation-ui-result-feedback';
+const __PRODUCTION_OPTIMIZER_VERSION='grid-native-d4-production-v9-json-program-io';
 
 async function __loadOptimizerModule(path,ready){
   if(ready())return;
-  const src=await fetch(path+'?v=20260824-prod-current-04',{cache:'no-store'}).then(r=>{if(!r.ok)throw new Error(path+' '+r.status);return r.text();});
+  const src=await fetch(path+'?v=20260824-prod-current-05',{cache:'no-store'}).then(r=>{if(!r.ok)throw new Error(path+' '+r.status);return r.text();});
   (0,eval)(src);
   if(!ready())throw new Error(path+' initialization failed');
 }
@@ -83,7 +83,7 @@ optimizeHybrid=async function(maxGenerations=20){
     const phaseReport={textContent:''};
     const phaseChassisSel={get value(){return config.chassisA;}};
     const seed=__chooseProductionMasterSeed(ref);
-    let src=await fetch('./phase-d4-evolution.js?v=20260824-prod-current-04',{cache:'no-store'}).then(r=>{if(!r.ok)throw new Error('phase-d4-evolution.js '+r.status);return r.text();});
+    let src=await fetch('./phase-d4-evolution.js?v=20260824-prod-current-05',{cache:'no-store'}).then(r=>{if(!r.ok)throw new Error('phase-d4-evolution.js '+r.status);return r.text();});
     src=ref.patchD4Source(src,seed,`${__PRODUCTION_OPTIMIZER_VERSION}-${generations}g-seed-${seed}`);
     src=__patchD4Generations(src,generations);
     src=__patchD4ForCurrentChassis(src,config.chassisA,config.chassisB);
@@ -130,6 +130,79 @@ optimizeHybrid=async function(maxGenerations=20){
   }finally{optimizeBtn.disabled=false;}
 };
 
+const __AI_JSON_FORMAT='robot-ai-battle-program-v1';
+const __AI_JSON_DIRS=new Set(['U','R','D','L']);
+function __exportSelfAiJson(){
+  const hash=__productionProgramHash(programs.A);
+  const report=window.__lastProductionD4Report;
+  const payload={
+    format:__AI_JSON_FORMAT,
+    version:1,
+    exportedAt:new Date().toISOString(),
+    programHash:hash,
+    program:cloneProgram(programs.A),
+    weapons:[weaponA1Sel.value,weaponA2Sel.value],
+    cpuClass:typeof cpuClass!=='undefined'?cpuClass:'standard',
+    chassisA:typeof chassisBySide!=='undefined'?chassisBySide.A:'standard',
+    source:{optimizer:__PRODUCTION_OPTIMIZER_VERSION,selectedGeneration:report?.selectedCheckpoint?.generation??null,checkpointHash:report?.selectedCheckpoint?.champion?.snapshot?.hash??hash}
+  };
+  const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');
+  const stamp=new Date().toISOString().replace(/[:.]/g,'-');
+  a.href=url;a.download=`robot-ai-${hash}-${stamp}.json`;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
+  statusEl.textContent=`自機AIをJSON保存しました。program hash ${hash}`;
+}
+
+function __validateImportedAiJson(data){
+  if(!data||typeof data!=='object')throw new Error('JSONの形式が不正です');
+  if(data.format!==__AI_JSON_FORMAT)throw new Error('対応していないJSON形式です');
+  const p=data.program;
+  if(!Array.isArray(p)||p.length!==36)throw new Error('programは36セル配列である必要があります');
+  const defs=new Map(chipTypes.map(x=>[x[0],x[2]]));
+  for(let i=0;i<36;i++){
+    const c=p[i];if(c==null)continue;
+    if(i===0)throw new Error('セル0はSTART固定なのでnullである必要があります');
+    if(typeof c!=='object'||!defs.has(c.type))throw new Error(`セル${i}: 未対応チップです`);
+    const expected=defs.get(c.type);if(c.kind!==expected)throw new Error(`セル${i}: kindがチップ定義と一致しません`);
+    if(c.kind==='action'){
+      if(!__AI_JSON_DIRS.has(c.next))throw new Error(`セル${i}: next方向が不正です`);
+    }else{
+      if(!__AI_JSON_DIRS.has(c.yes)||!__AI_JSON_DIRS.has(c.no))throw new Error(`セル${i}: 分岐方向が不正です`);
+    }
+  }
+  const cpu=data.cpuClass&&CPU_CLASSES?.[data.cpuClass]?data.cpuClass:(typeof cpuClass!=='undefined'?cpuClass:'standard');
+  const limit=CPU_CLASSES?.[cpu]?.limit||18;
+  const count=p.slice(1).filter(Boolean).length;
+  if(count>limit)throw new Error(`CPU上限超過です：${count}/${limit}チップ`);
+  const weapons=Array.isArray(data.weapons)&&data.weapons.length>=2?data.weapons.slice(0,2):null;
+  const validWeapons=new Set(['rifle','burst','heavy','rapid','mine','killer']);
+  if(!weapons||!weapons.every(w=>validWeapons.has(w)))throw new Error('武器設定が不正です');
+  return{program:cloneProgram(p),weapons,cpuClass:cpu,chassisA:data.chassisA&&CHASSIS_TYPES?.[data.chassisA]?data.chassisA:null,expectedHash:data.programHash||null};
+}
+
+async function __importSelfAiJsonFile(file){
+  if(!file)return;
+  const data=JSON.parse(await file.text()),x=__validateImportedAiJson(data);
+  if(typeof cpuClass!=='undefined')cpuClass=x.cpuClass;
+  if(typeof cpuClassSel!=='undefined'&&cpuClassSel)cpuClassSel.value=x.cpuClass;
+  try{localStorage.setItem('robot-ai-battle-v1-cpu-class',x.cpuClass);}catch(_e){}
+  if(x.chassisA&&typeof chassisBySide!=='undefined'){
+    chassisBySide.A=x.chassisA;
+    if(typeof chassisASel!=='undefined'&&chassisASel)chassisASel.value=x.chassisA;
+    if(typeof saveChassisSelection==='function')saveChassisSelection();
+    if(typeof updateChassisInfo==='function')updateChassisInfo();
+  }
+  programs.A=cloneProgram(x.program);
+  weaponA1Sel.value=x.weapons[0];weaponA2Sel.value=x.weapons[1];
+  editSide='A';selectedCell=1;
+  if(typeof resetWorld==='function')resetWorld();
+  if(state?.A){state.A.pc=0;state.A.acc=0;}
+  renderProgram();
+  const hash=__productionProgramHash(programs.A);
+  if(x.expectedHash&&hash!==x.expectedHash)throw new Error(`読み込みhash不一致：JSON ${x.expectedHash} / 盤面 ${hash}`);
+  if(typeof saveOptimizedResult==='function')saveOptimizedResult({importedJson:true,checkpointHash:hash,weapons:x.weapons.slice(),cpuClass:x.cpuClass,chassisA:x.chassisA});
+  statusEl.textContent=`JSONから自機AIを読み込みました。program hash ${hash}`;
+}
+
 (function __installProductionD4Ui(){
   try{
     if(typeof maxGenInput!=='undefined'&&maxGenInput){
@@ -141,5 +214,16 @@ optimizeHybrid=async function(maxGenerations=20){
       }
     }
     if(typeof optimizeBtn!=='undefined'&&optimizeBtn){optimizeBtn.textContent='強さ優先探索';optimizeBtn.title='現在選択中のCPU・自機・敵機条件と指定世代数で探索';}
+    const section=optimizeBtn?.closest('.section');
+    if(section&&!root.querySelector('#aiJsonIo')){
+      const box=document.createElement('div');box.id='aiJsonIo';box.style.cssText='display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;align-items:center';
+      const save=document.createElement('button');save.type='button';save.textContent='自機JSON保存';save.addEventListener('click',__exportSelfAiJson);
+      const load=document.createElement('button');load.type='button';load.textContent='JSON読込';
+      const input=document.createElement('input');input.type='file';input.accept='application/json,.json';input.style.display='none';
+      load.addEventListener('click',()=>{input.value='';input.click();});
+      input.addEventListener('change',async()=>{try{await __importSelfAiJsonFile(input.files?.[0]);}catch(e){console.error(e);statusEl.textContent='JSON読込エラー：'+(e?.message||e);}});
+      const note=document.createElement('span');note.className='mini';note.textContent='探索後の自機チップ配列・武器・CPU・機体を端末へ保存／復元';
+      box.append(save,load,input,note);section.appendChild(box);
+    }
   }catch(e){console.warn('production D4 UI setup failed',e);}
 })();
