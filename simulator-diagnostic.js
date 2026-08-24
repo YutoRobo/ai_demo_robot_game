@@ -127,6 +127,38 @@
     simulateBattleWeaponAware.__sharedBattlefield=true;
     simulateBattleWeaponAware.__tacticalActivityPatched=true;
   },0);
+
+  // Temporary experiment: guarantee that the two robots start with their direct line of sight blocked.
+  // Other obstacle placement and spawn randomization remain unchanged.
+  function ensureInitialOcclusion(ax,ay,bx,by,obs){
+    if(!Array.isArray(obs)||!Number.isFinite(ax)||!Number.isFinite(ay)||!Number.isFinite(bx)||!Number.isFinite(by))return obs;
+    const a={x:ax,y:ay},b={x:bx,y:by};
+    if(typeof lineBlockedByObstacle==='function'&&lineBlockedByObstacle(a,b,obs))return obs;
+    const size=72,mx=(ax+bx)/2,my=(ay+by)/2;
+    obs.push({x:mx-size/2,y:my-size/2,w:size,h:size,initialOccluder:true});
+    return obs;
+  }
+  if(typeof commonBattlefield==='function'&&!commonBattlefield.__initialOcclusion100){
+    const baseCommonBattlefield=commonBattlefield;
+    const wrappedCommonBattlefield=function(rng){
+      const f=baseCommonBattlefield(rng);
+      if(f)ensureInitialOcclusion(f.ax,f.ay,f.bx,f.by,f.obs);
+      return f;
+    };
+    wrappedCommonBattlefield.__initialOcclusion100=true;
+    commonBattlefield=wrappedCommonBattlefield;
+  }
+  if(typeof randomBattleStart==='function'&&!randomBattleStart.__initialOcclusion100){
+    const baseRandomBattleStart=randomBattleStart;
+    const wrappedRandomBattleStart=function(){
+      const s=baseRandomBattleStart();
+      if(s?.A&&s?.B)ensureInitialOcclusion(s.A.x,s.A.y,s.B.x,s.B.y,obstacles);
+      return s;
+    };
+    wrappedRandomBattleStart.__initialOcclusion100=true;
+    randomBattleStart=wrappedRandomBattleStart;
+  }
+  window.__initialOcclusionRate=1;
 })();
 
 // Quality patch for the sparse 300-population optimizer.
