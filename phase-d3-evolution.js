@@ -1,7 +1,7 @@
 // Phase D3: held-out engagement generalization + fixed strength validation.
 // Isolated from production optimizer. Builds on the D2 constraint-domination design.
 (function installPhaseD3(){
-  const VERSION='phase-d3-generalization-v0.1';
+  const VERSION='phase-d3-generalization-v0.2';
   const POP=300,K=6,PER_CLUSTER=50,GENERATIONS=20,ELITES=5;
   const COARSE_OPPS=2,DEEP_OPPS=4,DEEP_PER_CLUSTER=5,ENGAGE_OPPS=2;
   const HELDOUT_OPPS=4,VALIDATION_OPPS=4,CHECKPOINT_EVERY=5;
@@ -66,7 +66,8 @@
           const leaderValidation=[];
           for(const x of leaders){leaderValidation.push({id:x.id,cluster:x.cluster,metrics:evaluate(x,validationPanel,validationSeeds,c)});}
           const lvAgg=aggregateMetrics(leaderValidation.map(x=>x.metrics));
-          checkpoint={generation:g+1,calibrationFeasible:calFeasible.length,heldoutFeasibleAll,heldoutFeasibleAmongCalibration:heldFeasibleAmongCal,generalizationRate:heldFeasibleAmongCal/Math.max(1,calFeasible.length),falseFeasibleRate:falseFeasible/Math.max(1,calFeasible.length),heldout:{attackGameRate:aggregateMetrics(heldResults).attackGameRate,damageGameRate:aggregateMetrics(heldResults).damageGameRate,nonCombatRate:aggregateMetrics(heldResults).nonCombatRate,avgAttacks:aggregateMetrics(heldResults).avgAttacks,avgDamage:aggregateMetrics(heldResults).avgDamage},validationLeaders:{count:leaderValidation.length,winRate:lvAgg.winRate,resolvedRate:lvAgg.resolvedRate,avgDamage:lvAgg.avgDamage,avgAttacks:lvAgg.avgAttacks}};
+          const heldAgg=aggregateMetrics(heldResults);
+          checkpoint={generation:g+1,calibrationFeasible:calFeasible.length,heldoutFeasibleAll:heldFeasibleAll,heldoutFeasibleAmongCalibration:heldFeasibleAmongCal,generalizationRate:heldFeasibleAmongCal/Math.max(1,calFeasible.length),falseFeasibleRate:falseFeasible/Math.max(1,calFeasible.length),heldout:{attackGameRate:heldAgg.attackGameRate,damageGameRate:heldAgg.damageGameRate,nonCombatRate:heldAgg.nonCombatRate,avgAttacks:heldAgg.avgAttacks,avgDamage:heldAgg.avgDamage},validationLeaders:{count:leaderValidation.length,winRate:lvAgg.winRate,resolvedRate:lvAgg.resolvedRate,avgDamage:lvAgg.avgDamage,avgAttacks:lvAgg.avgAttacks}};
           checkpoints.push(checkpoint);
         }
         log.push({generation:g+1,feasible,feasibleRate:feasible/POP,feasibleByCluster,engagement:{attackGameRate:ea.attackGameRate,damageGameRate:ea.damageGameRate,nonCombatRate:ea.nonCombatRate,avgAttacks:ea.avgAttacks,avgDamage:ea.avgDamage},strength:{winRate:sa.winRate,resolvedRate:sa.resolvedRate,avgDamage:sa.avgDamage},checkpoint,clusters:gs.map(z=>z.length),battles:c.battles});
