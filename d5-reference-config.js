@@ -17,13 +17,19 @@
   const BASELINE_REPLACEMENT="function baselines(){const ref=window.__D5ReferenceConfig;if(!ref||!String(ref.VERSION||'').startsWith('d5-reference-config-v0.'))throw new Error('D5 reference config missing');const ps=[activeSeed(),...ref.baselineTail()],ws=[['rifle','rapid'],['rifle','mine'],['heavy','rapid'],['burst','killer'],['rapid','mine'],['heavy','killer']];return ps.map((p,i)=>({id:'base-'+i,program:clone(p),hash:hash(p),weapons:ws[i%ws.length].slice(),cluster:null,eval:null,engagement:null}));}";
   const MASTER_MARKER='const r=rngFactory(26082407),bs=baselines();';
   const VERSION_MARKER="const VERSION='phase-d4-checkpoint-test-v0.1';";
+  const VALIDATION_CANDIDATE_MARKER="const candidateVals=[];\n          for(const x of leaders){const metrics=evaluate(x,validationPanel,validationSeeds,c),snapshot=snap(x);if(hash(snapshot.program)!==snapshot.hash)c.checkpointHashViolations++;candidateVals.push({snapshot,metrics});}";
+  const VALIDATION_CANDIDATE_REPLACEMENT="const heldoutLeaders=[];\n          const heldoutBetter=(a,b)=>{const A=heldMap.get(a.id)||{},B=heldMap.get(b.id)||{},fa=engageFeasible(A),fb=engageFeasible(B);if(fa!==fb)return fa?-1:1;if((A.wins||0)!==(B.wins||0))return (B.wins||0)-(A.wins||0);if((A.resolved||0)!==(B.resolved||0))return (B.resolved||0)-(A.resolved||0);if((A.nonCombatGames||0)!==(B.nonCombatGames||0))return (A.nonCombatGames||0)-(B.nonCombatGames||0);if((A.damage||0)!==(B.damage||0))return (B.damage||0)-(A.damage||0);if((A.margin||0)!==(B.margin||0))return (B.margin||0)-(A.margin||0);return a.hash<b.hash?-1:a.hash>b.hash?1:0;};\n          for(let k=0;k<K;k++){const ranked=gs[k].slice().sort(heldoutBetter);for(const x of ranked.slice(0,DEEP_PER_CLUSTER))heldoutLeaders.push(x);}\n          const candidateVals=[];\n          for(const x of heldoutLeaders){const metrics=evaluate(x,validationPanel,validationSeeds,c),snapshot=snap(x);if(hash(snapshot.program)!==snapshot.hash)c.checkpointHashViolations++;candidateVals.push({snapshot,metrics});}";
+  const CHECKPOINT_RULE_MARKER="checkpointRule:'Every 5 generations, select one immutable checkpoint champion by fixed validation lexicographic order: wins > damage > resolved > margin. Final checkpoint is the best validation champion across checkpoints.'";
+  const CHECKPOINT_RULE_REPLACEMENT="checkpointRule:'Every 5 generations, evaluate all 300 individuals on held-out conditions, promote the strongest held-out individuals per behavior cluster to Validation, then select the immutable checkpoint champion by Validation order: wins > resolved > fewer non-combat games > damage > margin. Final checkpoint is the best Validation champion across checkpoints.'";
 
   function patchD4Source(src,masterSeed=MASTER_SEEDS[0],versionLabel){
-    if(typeof src!=='string'||!src.includes(VERSION_MARKER)||!src.includes(MASTER_MARKER)||!src.includes(BASELINE_MARKER))throw new Error('D4 reference source mismatch');
+    if(typeof src!=='string'||!src.includes(VERSION_MARKER)||!src.includes(MASTER_MARKER)||!src.includes(BASELINE_MARKER)||!src.includes(VALIDATION_CANDIDATE_MARKER))throw new Error('D4 reference source mismatch');
     const seed=(Number(masterSeed)>>>0);
     const label=versionLabel||`phase-d5-reference-seed-${seed}`;
-    return src.replace(VERSION_MARKER,`const VERSION='${label}';`).replace(BASELINE_MARKER,BASELINE_REPLACEMENT).replace(MASTER_MARKER,`const r=rngFactory(${seed}),bs=baselines();`);
+    let out=src.replace(VERSION_MARKER,`const VERSION='${label}';`).replace(BASELINE_MARKER,BASELINE_REPLACEMENT).replace(MASTER_MARKER,`const r=rngFactory(${seed}),bs=baselines();`).replace(VALIDATION_CANDIDATE_MARKER,VALIDATION_CANDIDATE_REPLACEMENT);
+    if(out.includes(CHECKPOINT_RULE_MARKER))out=out.replace(CHECKPOINT_RULE_MARKER,CHECKPOINT_RULE_REPLACEMENT);
+    return out;
   }
 
-  window.__D5ReferenceConfig={VERSION,MASTER_SEEDS:MASTER_SEEDS.slice(),VALIDATED_MASTER_SEEDS:VALIDATED_MASTER_SEEDS.slice(),VALIDATED:{...VALIDATED},defaultMasterSeed:MASTER_SEEDS[0],seedA,seedB,seedC,baselineTail,patchD4Source};
+  window.__D5ReferenceConfig={VERSION,MASTER_SEEDS:MASTER_SEEDS.slice(),VALIDATED_MASTER_SEEDS:VALIDATED_MASTER_SEEDS.slice(),VALIDATED:{...VALIDATED},defaultMasterSeed:MASTER_SEEDS[0],seedA,seedB,seedC,baselineTail,patchD4Source,promotionRuleVersion:'heldout-cluster-promotion-v1'};
 })();
