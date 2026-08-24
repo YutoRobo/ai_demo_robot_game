@@ -1,0 +1,93 @@
+// Phase D3: held-out engagement generalization + fixed strength validation.
+// Isolated from production optimizer. Builds on the D2 constraint-domination design.
+(function installPhaseD3(){
+  const VERSION='phase-d3-generalization-v0.1';
+  const POP=300,K=6,PER_CLUSTER=50,GENERATIONS=20,ELITES=5;
+  const COARSE_OPPS=2,DEEP_OPPS=4,DEEP_PER_CLUSTER=5,ENGAGE_OPPS=2;
+  const HELDOUT_OPPS=4,VALIDATION_OPPS=4,CHECKPOINT_EVERY=5;
+  const CROSS=.20,WEAPONS=['rifle','burst','heavy','rapid','mine','killer'];
+  const E=()=>window.__structuralEvolution;
+  const clone=p=>cloneProgram(p);
+  const hash=p=>{let h=2166136261>>>0,s=JSON.stringify(p);for(let i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619)>>>0;}return h.toString(16).padStart(8,'0');};
+  const rngFactory=seed=>{let s=seed>>>0;return()=>{s=(Math.imul(s,1664525)+1013904223)>>>0;return s/4294967296;};};
+  const pick=(a,r)=>a[Math.floor(r()*a.length)],pct=x=>(100*x).toFixed(1)+'%';let seq=0;
+
+  function activeSeed(){const p=Array(36).fill(null);p[1]={type:'enemyInNarrowFov',kind:'cond',yes:'D',no:'R'};p[2]={type:'turnR',kind:'action',next:'L'};p[7]={type:'aim',kind:'action',next:'R'};p[8]={type:'canShoot',kind:'cond',yes:'R',no:'L'};p[9]={type:'weapon1',kind:'action',next:'D'};p[15]={type:'strafeR',kind:'action',next:'U'};return p;}
+  function baselines(){const ps=[activeSeed(),handDesignedChampion('A'),handDesignedChampion('B'),...strategicSeeds()],ws=[['rifle','rapid'],['rifle','mine'],['heavy','rapid'],['burst','killer'],['rapid','mine'],['heavy','killer']];return ps.map((p,i)=>({id:'base-'+i,program:clone(p),hash:hash(p),weapons:ws[i%ws.length].slice(),cluster:null,eval:null,engagement:null}));}
+  function ind(program,weapons,operator,parents,g){return{id:'d3-'+g+'-'+(++seq),program:clone(program),hash:hash(program),weapons:weapons.slice(),operator,parents:parents.slice(),birthGeneration:g,cluster:null,eval:null,engagement:null,deepEval:null};}
+  function structureOK(x,c){const h=E().structureHealth(x.program);if(!h.valid){c.invalidToEvaluation++;return false;}const runtime=trimProgramToCpu(x.program);if(hash(runtime)!==x.hash){c.runtimeHashViolations++;return false;}return true;}
+
+  function empty(){return{games:0,wins:0,draws:0,losses:0,resolved:0,margin:0,damage:0,attacks:0,translation:0,orientation:0,nonCombatGames:0,attackGames:0,damageGames:0,visited:0,dist:0,ticks:0,mineUses:0};}
+  function add(m,r,side){const st=r.stats?.[side]||{},ac=r.activity?.[side]||{},A=side==='A',won=A?r.winner>0:r.winner<0,lost=A?r.winner<0:r.winner>0;m.games++;if(won)m.wins++;else if(lost)m.losses++;else m.draws++;if(r.resolved)m.resolved++;m.margin+=A?(r.a-r.b):(r.b-r.a);const attacks=Number(ac.attacks??((st.shoot||0)+(st.mine||0)+(st.killer||0))),damage=Number(ac.damage??st.damage??0);m.attacks+=attacks;m.damage+=damage;m.translation+=Number(ac.translation??((st.move||0)+(st.evade||0)));m.orientation+=Number(ac.orientation??((st.turn||0)+(st.aim||0)));if(ac.nonCombat===true||(attacks===0&&damage===0))m.nonCombatGames++;if(attacks>0)m.attackGames++;if(damage>0)m.damageGames++;m.visited+=Number(st.visitedCount||0);m.dist+=Number(st.dist||0);m.ticks+=Number(st.ticks||0);m.mineUses+=Number(st.mine||0);}
+  function finish(m){const g=Math.max(1,m.games),t=Math.max(1,m.ticks);return{...m,winRate:m.wins/g,resolvedRate:m.resolved/g,nonCombatRate:m.nonCombatGames/g,attackGameRate:m.attackGames/g,damageGameRate:m.damageGames/g,avgDamage:m.damage/g,avgAttacks:m.attacks/g,avgTranslation:m.translation/g,avgOrientation:m.orientation/g,avgVisited:m.visited/g,meanDistance:m.dist/t,behavior:[m.dist/t,m.translation/g,m.orientation/g,m.attacks/g,m.mineUses/g,m.visited/g,m.nonCombatGames/g]};}
+  function evaluate(x,opps,seeds,c){const before=hash(x.program);if(!structureOK(x,c))return{...finish(empty()),invalid:true};const m=empty();for(let i=0;i<opps.length;i++){const q=opps[i],seed=seeds[i%seeds.length],r1=simulateBattleWeaponAware(x.program,q.program,seed,x.weapons[0],x.weapons[1],q.weapons[0],q.weapons[1]),r2=simulateBattleWeaponAware(q.program,x.program,seed,q.weapons[0],q.weapons[1],x.weapons[0],x.weapons[1]);c.battles+=2;add(m,r1,'A');add(m,r2,'B');}if(hash(x.program)!==before)c.programHashViolations++;return finish(m);}
+  function engageFeasible(e){return !e?.invalid&&(e.damageGames>0||e.attackGameRate>=.25);}
+  function engagementCompare(a,b){const A=a.engagement,B=b.engagement,fa=engageFeasible(A),fb=engageFeasible(B);if(fa!==fb)return fa?1:-1;if(!fa){for(const k of ['damageGameRate','attackGameRate','avgDamage','avgAttacks','avgOrientation','avgTranslation'])if((A?.[k]||0)!==(B?.[k]||0))return (A?.[k]||0)>(B?.[k]||0)?1:-1;}return 0;}
+  function stronger(a,b,key='eval'){if(!b)return true;if(!a)return false;const ec=engagementCompare(a,b);if(ec)return ec>0;const A=a[key],B=b[key];if(!B)return true;if(!A)return false;for(const k of ['wins','damage','resolved','margin'])if((A[k]||0)!==(B[k]||0))return (A[k]||0)>(B[k]||0);return a.hash<b.hash;}
+
+  function normalize(vs){const d=vs[0]?.length||0,lo=Array(d).fill(Infinity),hi=Array(d).fill(-Infinity);for(const v of vs)for(let j=0;j<d;j++){lo[j]=Math.min(lo[j],v[j]);hi[j]=Math.max(hi[j],v[j]);}return vs.map(v=>v.map((x,j)=>(x-lo[j])/(hi[j]-lo[j]||1)));}
+  function clusters(items){const vecs=normalize(items.map(x=>x.eval.behavior)),centers=[];for(let c=0;c<K;c++)centers.push(vecs[Math.floor(c*vecs.length/K)]?.slice()||Array(7).fill(0));const a=Array(items.length).fill(-1);for(let it=0;it<7;it++){const opts=[];for(let i=0;i<items.length;i++)for(let c=0;c<K;c++){let d=0;for(let j=0;j<vecs[i].length;j++)d+=(vecs[i][j]-centers[c][j])**2;opts.push({i,c,d});}opts.sort((x,y)=>x.d-y.d);a.fill(-1);const cap=Array(K).fill(0);for(const o of opts)if(a[o.i]<0&&cap[o.c]<PER_CLUSTER){a[o.i]=o.c;cap[o.c]++;}for(let c=0;c<K;c++){const ids=[];for(let i=0;i<a.length;i++)if(a[i]===c)ids.push(i);if(ids.length)for(let j=0;j<centers[c].length;j++)centers[c][j]=ids.reduce((s,i)=>s+vecs[i][j],0)/ids.length;}}return a;}
+  function tournament(pool,r){let best=null;for(let i=0;i<Math.min(4,pool.length);i++){const x=pick(pool,r);if(!best||stronger(x,best))best=x;}return best;}
+  function mutate(p,r,g){let prog=p.program,w=p.weapons.slice(),op='weaponProfileMutation';if(r()<.15)w[Math.floor(r()*2)]=pick(WEAPONS,r);else{const m=E().mutateStructured(p.program,r);prog=m.program;op=m.operator;}return ind(prog,w,op,[p.id],g);}
+  function cross(a,b,r,g){const x=E().crossoverSubgraph(a.program,b.program,r);if(!x)return mutate(a,r,g);return ind(x.program,[r()<.5?a.weapons[0]:b.weapons[0],r()<.5?a.weapons[1]:b.weapons[1]],'subgraphCrossover',[a.id,b.id],g);}
+  function group(pop){const g=Array.from({length:K},()=>[]);for(const x of pop)g[x.cluster].push(x);return g;}
+  function opps(pool,n,off){const out=[];for(let i=0;i<n;i++)out.push(pool[(off+i*7)%pool.length]);return out;}
+  function makeInitial(r){const bs=baselines().filter(x=>E().structureHealth(x.program).valid),out=[],seen=new Set();let guard=0;while(out.length<POP&&guard++<15000){const b=bs[out.length%bs.length];let p=clone(b.program),w=b.weapons.slice(),op='seed';if(out.length>=bs.length){const m=E().mutateStructured(p,r);p=m.program;op=m.operator;if(r()<.18)w[Math.floor(r()*2)]=pick(WEAPONS,r);}if(!E().structureHealth(p).valid)continue;const x=ind(p,w,op,[b.id],0),sig=x.hash+'|'+w.join('|');if(seen.has(sig)&&guard<8000)continue;seen.add(sig);out.push(x);}if(out.length!==POP)throw new Error('initial population failed '+out.length);return out;}
+  function aggregate(pop,key){const m=empty();for(const x of pop){const e=x[key];if(!e)continue;for(const k of Object.keys(m))m[k]+=Number(e[k]||0);}return finish(m);}
+  function aggregateMetrics(xs){const m=empty();for(const e of xs)for(const k of Object.keys(m))m[k]+=Number(e?.[k]||0);return finish(m);}
+
+  async function run(){
+    const e=E();if(!e||e.VERSION!=='grid-native-structure-v0.4-metadata')throw new Error('v0.4 metadata structural engine not loaded');if(!simulateBattleWeaponAware?.__authoritativeMeasured)throw new Error('authoritative-measured simulator not loaded');
+    e.cfg.operatorWeights.extendBranch=0;e.cfg.disabledOperators=['redirectEdge','extendBranch'];
+    const c={battles:0,invalidToEvaluation:0,runtimeHashViolations:0,programHashViolations:0,eliteHashViolations:0,feasibleEliteViolations:0,clusterMigrations:0,mutationChildren:0,crossoverChildren:0,parentCopies:0};
+    const r=rngFactory(26082406),bs=baselines();
+    const engagePanel=[bs[0],bs[3]||bs[1]],engageSeeds=[1910000001,1910010009];
+    const heldoutPanel=[bs[1],bs[2],bs[4]||bs[0],bs[5]||bs[3]],heldoutSeeds=[2110000011,2110010037,2110020067,2110030091];
+    const validationPanel=[bs[0],bs[1],bs[2],bs[3]],validationSeeds=[2210000003,2210010049,2210020081,2210030127];
+    let pop=makeInitial(r),hof=bs.slice(),log=[],checkpoints=[];
+    const oldCh={A:chassisBySide.A,B:chassisBySide.B};chassisBySide.A=phaseChassisSel.value;chassisBySide.B=phaseChassisSel.value;
+    try{
+      for(let g=0;g<GENERATIONS;g++){
+        phaseStatus.textContent=`Phase D3 実行中：${g+1}/${GENERATIONS}世代・Train/Engagement…`;
+        for(const x of pop)x.engagement=evaluate(x,engagePanel,engageSeeds,c);
+        const pool=[...bs,...hof],co=opps(pool,COARSE_OPPS,g*3),cs=Array.from({length:COARSE_OPPS},(_,i)=>1705000000+g*10007+i*1009);
+        for(let i=0;i<pop.length;i++){pop[i].eval=evaluate(pop[i],co,cs,c);if(i%30===29)await new Promise(q=>setTimeout(q,0));}
+        const as=clusters(pop);for(let i=0;i<pop.length;i++){const old=pop[i].cluster;pop[i].cluster=as[i];if(old!=null&&old!==as[i])c.clusterMigrations++;}
+        const gs=group(pop),deep=opps(pool,DEEP_OPPS,g*5+1),ds=Array.from({length:DEEP_OPPS},(_,i)=>1805000000+g*12011+i*1301),leaders=[];
+        for(let k=0;k<K;k++){gs[k].sort((a,b)=>stronger(a,b)?-1:1);for(const x of gs[k].slice(0,DEEP_PER_CLUSTER)){x.deepEval=evaluate(x,deep,ds,c);leaders.push(x);}}
+        const ea=aggregate(pop,'engagement'),sa=aggregate(pop,'eval'),feasible=pop.filter(x=>engageFeasible(x.engagement)).length,feasibleByCluster=gs.map(z=>z.filter(x=>engageFeasible(x.engagement)).length);
+        let checkpoint=null;
+        if((g+1)%CHECKPOINT_EVERY===0){
+          phaseStatus.textContent=`Phase D3 実行中：${g+1}/${GENERATIONS}世代・Held-out/固定Validation…`;
+          const heldResults=[],calFeasible=pop.filter(x=>engageFeasible(x.engagement)),heldMap=new Map();
+          for(let i=0;i<pop.length;i++){const hr=evaluate(pop[i],heldoutPanel,heldoutSeeds,c);heldResults.push(hr);heldMap.set(pop[i].id,hr);if(i%30===29)await new Promise(q=>setTimeout(q,0));}
+          const heldFeasibleAll=heldResults.filter(engageFeasible).length,heldFeasibleAmongCal=calFeasible.filter(x=>engageFeasible(heldMap.get(x.id))).length;
+          const falseFeasible=calFeasible.length-heldFeasibleAmongCal;
+          const leaderValidation=[];
+          for(const x of leaders){leaderValidation.push({id:x.id,cluster:x.cluster,metrics:evaluate(x,validationPanel,validationSeeds,c)});}
+          const lvAgg=aggregateMetrics(leaderValidation.map(x=>x.metrics));
+          checkpoint={generation:g+1,calibrationFeasible:calFeasible.length,heldoutFeasibleAll,heldoutFeasibleAmongCalibration:heldFeasibleAmongCal,generalizationRate:heldFeasibleAmongCal/Math.max(1,calFeasible.length),falseFeasibleRate:falseFeasible/Math.max(1,calFeasible.length),heldout:{attackGameRate:aggregateMetrics(heldResults).attackGameRate,damageGameRate:aggregateMetrics(heldResults).damageGameRate,nonCombatRate:aggregateMetrics(heldResults).nonCombatRate,avgAttacks:aggregateMetrics(heldResults).avgAttacks,avgDamage:aggregateMetrics(heldResults).avgDamage},validationLeaders:{count:leaderValidation.length,winRate:lvAgg.winRate,resolvedRate:lvAgg.resolvedRate,avgDamage:lvAgg.avgDamage,avgAttacks:lvAgg.avgAttacks}};
+          checkpoints.push(checkpoint);
+        }
+        log.push({generation:g+1,feasible,feasibleRate:feasible/POP,feasibleByCluster,engagement:{attackGameRate:ea.attackGameRate,damageGameRate:ea.damageGameRate,nonCombatRate:ea.nonCombatRate,avgAttacks:ea.avgAttacks,avgDamage:ea.avgDamage},strength:{winRate:sa.winRate,resolvedRate:sa.resolvedRate,avgDamage:sa.avgDamage},checkpoint,clusters:gs.map(z=>z.length),battles:c.battles});
+        phaseProgress.style.width=(((g+1)/GENERATIONS)*100).toFixed(1)+'%';phaseSummary.textContent=`世代 ${g+1}/${GENERATIONS} / 対戦 ${c.battles} / Engagement可 ${feasible}/${POP} (${pct(feasible/POP)})${checkpoint?` / Held-out汎化 ${pct(checkpoint.generalizationRate)} / 固定Val勝率 ${pct(checkpoint.validationLeaders.winRate)}`:''}`;
+        if(g===GENERATIONS-1)break;
+        const next=[];
+        for(let k=0;k<K;k++){
+          const p=gs[k].slice().sort((a,b)=>stronger(a,b)?-1:1),feas=p.filter(x=>engageFeasible(x.engagement)),elite=p.slice(0,ELITES);
+          for(let j=0;j<Math.min(ELITES,feas.length);j++)if(!engageFeasible(elite[j].engagement))c.feasibleEliteViolations++;
+          for(const x of elite){const cp=ind(x.program,x.weapons,'eliteCopy',[x.id],g+1);cp.cluster=k;if(cp.hash!==x.hash)c.eliteHashViolations++;next.push(cp);}
+          while(next.filter(x=>x.cluster===k).length<PER_CLUSTER){const pa=tournament(p,r);let ch;if(r()<CROSS){const pb=tournament(r()<.7?p:pop,r);ch=cross(pa,pb,r,g+1);c.crossoverChildren++;}else{ch=mutate(pa,r,g+1);c.mutationChildren++;}if(!e.structureHealth(ch.program).valid){ch=ind(pa.program,pa.weapons,'parentCopy',[pa.id],g+1);c.parentCopies++;}ch.cluster=k;next.push(ch);}
+          if(p[0]&&!hof.some(h=>h.hash===p[0].hash&&h.weapons.join('|')===p[0].weapons.join('|')))hof.push({id:'hof-'+p[0].id,program:clone(p[0].program),hash:p[0].hash,weapons:p[0].weapons.slice(),cluster:k});
+        }
+        if(hof.length>72)hof=hof.slice(-72);pop=next;await new Promise(q=>setTimeout(q,0));
+      }
+      const fg=group(pop),finalFeasible=pop.filter(x=>engageFeasible(x.engagement)).length,finalByCluster=fg.map(z=>z.filter(x=>engageFeasible(x.engagement)).length),finalCheckpoint=checkpoints[checkpoints.length-1]||null;
+      const validationSeries=checkpoints.map(x=>({generation:x.generation,winRate:x.validationLeaders.winRate,resolvedRate:x.validationLeaders.resolvedRate,avgDamage:x.validationLeaders.avgDamage,avgAttacks:x.validationLeaders.avgAttacks}));
+      const report={version:VERSION,structuralVersion:e.VERSION,catalogVersion:window.__chipCatalog?.version||null,simulator:'authoritative-measured-v2',population:POP,clusters:K,generations:GENERATIONS,engagementRule:'damageGames>0 OR attackGameRate>=0.25 on fixed 4-game calibration panel',heldoutRule:'same feasibility rule on disjoint 8-game held-out panel with different opponents/seeds/obstacle maps',config:{cpuLimit:cpuChipLimit(),cpuDecisionMs:Math.round(cpuDecisionPeriod()*1000),chassis:phaseChassisSel.value,engagementOpponents:ENGAGE_OPPS,heldoutOpponents:HELDOUT_OPPS,validationOpponents:VALIDATION_OPPS,checkpointEvery:CHECKPOINT_EVERY,coarseOpponents:COARSE_OPPS,deepOpponents:DEEP_OPPS,elitesPerCluster:ELITES},counters:c,finalClusters:fg.map(z=>z.length),finalFeasible,finalFeasibleRate:finalFeasible/POP,finalFeasibleByCluster:finalByCluster,checkpoints,validationSeries,finalGeneralization:finalCheckpoint?{calibrationFeasible:finalCheckpoint.calibrationFeasible,heldoutFeasibleAmongCalibration:finalCheckpoint.heldoutFeasibleAmongCalibration,generalizationRate:finalCheckpoint.generalizationRate,falseFeasibleRate:finalCheckpoint.falseFeasibleRate,heldout:finalCheckpoint.heldout}:null,log,timestamp:new Date().toISOString()};
+      report.pass=simulateBattleWeaponAware.__authoritativeMeasured===true&&c.invalidToEvaluation===0&&c.runtimeHashViolations===0&&c.programHashViolations===0&&c.eliteHashViolations===0&&c.feasibleEliteViolations===0&&c.mutationChildren>0&&c.crossoverChildren>0&&report.finalClusters.every(x=>x===PER_CLUSTER)&&checkpoints.length===GENERATIONS/CHECKPOINT_EVERY;
+      window.__phaseD3Report=report;phaseReport.textContent=JSON.stringify(report,null,2);phaseStatus.textContent=report.pass?'Phase D3 PASS：Held-out汎化と固定Validationの計測を完走しました。':'Phase D3 要確認：監査または検証系列に問題があります。';phaseSummary.textContent+=` / ${report.pass?'PASS':'要確認'}${finalCheckpoint?` / 最終Held-out汎化 ${pct(finalCheckpoint.generalizationRate)} / False feasible ${pct(finalCheckpoint.falseFeasibleRate)}`:''}`;return report;
+    }finally{chassisBySide.A=oldCh.A;chassisBySide.B=oldCh.B;}
+  }
+  window.__phaseD3={VERSION,run};
+})();
