@@ -82,17 +82,17 @@
 (function installStructuralSearchParameters(){
   const KEY='robot-ai-battle-v1-structural-search-params';
   const PRESETS={
-    standard:{crossover:20,multiRate:0,multiExtra:1,replaceAction:20,replaceCondition:16,insertAction:16,insertCondition:22,removeAction:10,collapseCondition:6,weaponMutation:10},
-    diffuse:{crossover:25,multiRate:45,multiExtra:2,replaceAction:10,replaceCondition:10,insertAction:28,insertCondition:32,removeAction:4,collapseCondition:2,weaponMutation:8}
+    standard:{crossover:20,multiRate:0,multiExtra:1,replaceAction:20,replaceCondition:16,insertAction:16,insertCondition:22,removeAction:10,collapseCondition:6,weaponMutation:10,fastDiagnostic:false},
+    diffuse:{crossover:25,multiRate:45,multiExtra:2,replaceAction:10,replaceCondition:10,insertAction:28,insertCondition:32,removeAction:4,collapseCondition:2,weaponMutation:8,fastDiagnostic:false}
   };
   let current={...PRESETS.diffuse};
   try{const saved=JSON.parse(localStorage.getItem(KEY)||'null');if(saved&&typeof saved==='object')current={...current,...saved};}catch(_e){}
   const clamp=(v,lo,hi,d)=>Math.max(lo,Math.min(hi,Number.isFinite(Number(v))?Number(v):d));
   function normalized(){return{
     crossover:clamp(current.crossover,0,80,25),multiRate:clamp(current.multiRate,0,100,45),multiExtra:Math.round(clamp(current.multiExtra,1,4,2)),
-    replaceAction:clamp(current.replaceAction,0,100,10),replaceCondition:clamp(current.replaceCondition,0,100,10),insertAction:clamp(current.insertAction,0,100,28),insertCondition:clamp(current.insertCondition,0,100,32),removeAction:clamp(current.removeAction,0,100,4),collapseCondition:clamp(current.collapseCondition,0,100,2),weaponMutation:clamp(current.weaponMutation,0,100,8)
+    replaceAction:clamp(current.replaceAction,0,100,10),replaceCondition:clamp(current.replaceCondition,0,100,10),insertAction:clamp(current.insertAction,0,100,28),insertCondition:clamp(current.insertCondition,0,100,32),removeAction:clamp(current.removeAction,0,100,4),collapseCondition:clamp(current.collapseCondition,0,100,2),weaponMutation:clamp(current.weaponMutation,0,100,8),fastDiagnostic:current.fastDiagnostic===true
   };}
-  function save(){current=normalized();try{localStorage.setItem(KEY,JSON.stringify(current));}catch(_e){}window.__structuralSearchParams={...current};}
+  function save(){current=normalized();try{localStorage.setItem(KEY,JSON.stringify(current));}catch(_e){}window.__structuralSearchParams={...current};window.__fastStructuralDiagnostic=current.fastDiagnostic===true;}
   save();
   function applyStructuralWeights(){
     const e=window.__structuralEvolution;if(!e?.cfg)return;
@@ -118,6 +118,12 @@
     const validationReplacement="function validationBetter(A,B){if(!B)return true;const a=A.metrics,b=B.metrics;if((a.wins||0)!==(b.wins||0))return (a.wins||0)>(b.wins||0);if((a.resolved||0)!==(b.resolved||0))return (a.resolved||0)>(b.resolved||0);if((a.nonCombatGames||0)!==(b.nonCombatGames||0))return (a.nonCombatGames||0)<(b.nonCombatGames||0);for(const k of ['damage','margin'])if((a[k]||0)!==(b[k]||0))return (a[k]||0)>(b[k]||0);return A.snapshot.hash<B.snapshot.hash;}";
     if(!src.includes(validationMarker))throw new Error('D4 validation selection marker mismatch');
     src=src.replace(validationMarker,validationReplacement);
+    const perfMarker="const n=count(x),key=band(n),e=x.eval||{};";
+    if(src.includes(perfMarker))src=src.replace(perfMarker,"const n=count(x),key=band(n),e=x.engagement||{};");
+    if(p.fastDiagnostic){
+      const loadMarker='const COARSE_OPPS=2,DEEP_OPPS=4,DEEP_PER_CLUSTER=5,ENGAGE_OPPS=2;';
+      if(src.includes(loadMarker))src=src.replace(loadMarker,'const COARSE_OPPS=1,DEEP_OPPS=2,DEEP_PER_CLUSTER=3,ENGAGE_OPPS=2;');
+    }
     window.__selectionPressureVersion='wins-resolved-noncombat-v1';
     return src;
   }
@@ -141,13 +147,14 @@
     const d=document.createElement('details');d.id='structuralSearchParams';d.style.cssText='margin-top:9px;padding:8px;border:1px solid rgba(128,128,128,.35);border-radius:10px';
     const s=document.createElement('summary');s.textContent='構造探索パラメータ';s.style.cssText='cursor:pointer;font-weight:700';d.appendChild(s);
     const note=document.createElement('div');note.className='mini';note.style.margin='6px 0';note.textContent='候補生成の広がりを調整します。選抜は勝利を最優先し、同勝数なら決着が多く、非戦闘が少ない個体を優先します。';d.appendChild(note);
+    const fastLabel=document.createElement('label');fastLabel.className='mini';fastLabel.style.cssText='display:flex;gap:7px;align-items:center;margin:8px 0;padding:7px;border-radius:8px;background:rgba(128,128,128,.08)';const fast=document.createElement('input');fast.type='checkbox';fast.checked=current.fastDiagnostic===true;fast.addEventListener('change',()=>{current.fastDiagnostic=fast.checked;save();if(typeof statusEl!=='undefined')statusEl.textContent=fast.checked?'高速診断を有効にしました。20世代で評価負荷を軽くして構造傾向を確認します。':'高速診断を解除しました。通常探索に戻ります。';});const fastText=document.createElement('span');fastText.textContent='高速診断（20世代・軽量評価）';fastLabel.append(fast,fastText);d.appendChild(fastLabel);
     const grid=document.createElement('div');grid.style.cssText='display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px';
     const defs=[['crossover','交叉率 %',0,80,5],['multiRate','複数変異率 %',0,100,5],['multiExtra','追加変異 最大',1,4,1],['insertAction','Action挿入 重み',0,100,1],['insertCondition','条件分岐挿入 重み',0,100,1],['removeAction','Action削除 重み',0,100,1],['collapseCondition','条件縮約 重み',0,100,1],['replaceAction','Action置換 重み',0,100,1],['replaceCondition','条件置換 重み',0,100,1],['weaponMutation','武器チップ変異 重み',0,100,1]];
     const inputs={};
     for(const [k,label,min,max,step] of defs){const l=document.createElement('label');l.className='mini';l.textContent=label;const i=document.createElement('input');i.type='number';i.min=String(min);i.max=String(max);i.step=String(step);i.value=String(current[k]);i.style.cssText='width:100%;margin-top:2px';i.addEventListener('change',()=>{current[k]=i.value;save();});l.appendChild(i);grid.appendChild(l);inputs[k]=i;}
     d.appendChild(grid);
     const row=document.createElement('div');row.style.cssText='display:flex;gap:6px;flex-wrap:wrap;margin-top:8px';
-    function presetButton(label,name){const b=document.createElement('button');b.type='button';b.textContent=label;b.addEventListener('click',()=>{current={...PRESETS[name]};save();for(const k of Object.keys(inputs))inputs[k].value=String(current[k]);if(typeof statusEl!=='undefined')statusEl.textContent=`構造探索を「${label}」に設定しました。`;});return b;}
+    function presetButton(label,name){const b=document.createElement('button');b.type='button';b.textContent=label;b.addEventListener('click',()=>{const keepFast=current.fastDiagnostic===true;current={...PRESETS[name],fastDiagnostic:keepFast};save();for(const k of Object.keys(inputs))inputs[k].value=String(current[k]);fast.checked=current.fastDiagnostic===true;if(typeof statusEl!=='undefined')statusEl.textContent=`構造探索を「${label}」に設定しました。`;});return b;}
     row.append(presetButton('標準','standard'),presetButton('拡散強め','diffuse'));d.appendChild(row);section.appendChild(d);
     const td=document.createElement('details');td.id='structuralTelemetry';td.style.cssText='margin-top:9px;padding:8px;border:1px solid rgba(128,128,128,.35);border-radius:10px';const ts=document.createElement('summary');ts.textContent='構造推移';ts.style.cssText='cursor:pointer;font-weight:700';const pre=document.createElement('pre');pre.id='structuralTelemetryBody';pre.textContent='探索後に世代ごとのチップ数分布を表示します。';pre.style.cssText='white-space:pre-wrap;overflow:auto;font:11px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace;margin:7px 0 0';td.append(ts,pre);section.appendChild(td);
   }
@@ -157,11 +164,11 @@
       if(typeof optimizeHybrid!=='function'||optimizeHybrid.__structuralParamWrapped)return;
       const base=optimizeHybrid;
       const wrapped=async function(maxGenerations){
-        save();applyStructuralWeights();const p=normalized(),oldFetch=window.fetch;
+        save();applyStructuralWeights();const p=normalized(),oldFetch=window.fetch,runGenerations=p.fastDiagnostic?20:maxGenerations;
         window.fetch=async function(input,init){const url=typeof input==='string'?input:(input?.url||'');const res=await oldFetch.call(this,input,init);if(!url.includes('phase-d4-evolution.js'))return res;const text=await res.text();return new Response(patchD4Source(text,p),{status:res.status,statusText:res.statusText,headers:res.headers});};
         try{
-          if(typeof evoDetail!=='undefined')evoDetail.textContent=`構造拡散：交叉${p.crossover}% / 複数変異${p.multiRate}% / 挿入重み ${p.insertAction}+${p.insertCondition} / 選抜: 勝利→決着→非戦闘`;
-          const report=await base(maxGenerations);renderStructureTelemetry(report);return report;
+          if(typeof evoDetail!=='undefined')evoDetail.textContent=p.fastDiagnostic?`高速診断：20世代 / 交叉${p.crossover}% / 複数変異${p.multiRate}% / 固定Engagementで帯域性能を比較`:`構造拡散：交叉${p.crossover}% / 複数変異${p.multiRate}% / 挿入重み ${p.insertAction}+${p.insertCondition} / 選抜: 勝利→決着→非戦闘`;
+          const report=await base(runGenerations);renderStructureTelemetry(report);if(p.fastDiagnostic&&typeof evoDetail!=='undefined')evoDetail.textContent+=` / 高速診断モード`;return report;
         }finally{window.fetch=oldFetch;}
       };
       wrapped.__structuralParamWrapped=true;wrapped.__baseOptimize=base;optimizeHybrid=wrapped;
