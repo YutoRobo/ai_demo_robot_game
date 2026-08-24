@@ -1,10 +1,10 @@
 // Production optimizer integration: grid-native D4 pipeline generalized to the current game setup.
-// The D5-verified algorithm/baseline definition is kept, while CPU and chassis come from the UI.
-const __PRODUCTION_OPTIMIZER_VERSION='grid-native-d4-production-v6-current-config-final-install';
+// The D5-verified algorithm/baseline definition is kept, while CPU, chassis and generation count come from the UI.
+const __PRODUCTION_OPTIMIZER_VERSION='grid-native-d4-production-v7-variable-generations';
 
 async function __loadOptimizerModule(path,ready){
   if(ready())return;
-  const src=await fetch(path+'?v=20260824-prod-current-02',{cache:'no-store'}).then(r=>{if(!r.ok)throw new Error(path+' '+r.status);return r.text();});
+  const src=await fetch(path+'?v=20260824-prod-current-03',{cache:'no-store'}).then(r=>{if(!r.ok)throw new Error(path+' '+r.status);return r.text();});
   (0,eval)(src);
   if(!ready())throw new Error(path+' initialization failed');
 }
@@ -30,6 +30,18 @@ function __productionProgramHash(p){
   return h.toString(16).padStart(8,'0');
 }
 
+function __normalizeProductionGenerations(value){
+  const raw=Math.floor(Number(value)||20);
+  return Math.max(20,Math.min(200,Math.round(raw/5)*5));
+}
+
+function __patchD4Generations(src,generations){
+  const marker='const POP=300,K=6,PER_CLUSTER=50,GENERATIONS=20,ELITES=5;';
+  const replacement=`const POP=300,K=6,PER_CLUSTER=50,GENERATIONS=${generations},ELITES=5;`;
+  if(!src.includes(marker))throw new Error('D4 generation marker mismatch');
+  return src.replace(marker,replacement);
+}
+
 // D4 was originally symmetric in chassis. For production, preserve the selected A/B chassis.
 // The reverse-side evaluation temporarily swaps chassis too, so the candidate keeps the A chassis
 // and the opponent keeps the B chassis even when spawn/program sides are reversed for fairness.
@@ -47,15 +59,15 @@ function __patchD4ForCurrentChassis(src,chassisA,chassisB){
 
 optimizeHybrid=async function(maxGenerations=20){
   running=false;startBtn.textContent='戦闘開始';optimizeBtn.disabled=true;
-  const requested=Math.max(20,Math.floor(Number(maxGenerations)||20)),generations=20;
+  const generations=__normalizeProductionGenerations(maxGenerations);
   const config=__productionConfigSnapshot();
-  if(typeof maxGenInput!=='undefined'&&maxGenInput){maxGenInput.value=String(generations);maxGenInput.disabled=true;maxGenInput.title='現在の本番探索は20世代で実行します';}
+  if(typeof maxGenInput!=='undefined'&&maxGenInput){maxGenInput.value=String(generations);}
   const cpuName=CPU_CLASSES?.[config.cpuClass]?.name||config.cpuClass;
   const chAName=CHASSIS_TYPES?.[config.chassisA]?.name||config.chassisA;
   const chBName=CHASSIS_TYPES?.[config.chassisB]?.name||config.chassisB;
-  statusEl.textContent=`現在設定（${cpuName} / 自機${chAName} / 敵機${chBName}）で強さ優先探索を準備中…`;
+  statusEl.textContent=`現在設定（${cpuName} / 自機${chAName} / 敵機${chBName} / ${generations}世代）で強さ優先探索を準備中…`;
   evoGen.textContent='準備中';evoBattles.textContent='0';evoBest.textContent='-';evoProgress.style.width='1%';
-  evoDetail.textContent=requested!==generations?`探索アルゴリズムは20世代で実行します。CPU ${cpuName} ${config.cpuLimit}チップ ${config.cpuDecisionMs}ms / ${chAName} vs ${chBName}`:`CPU ${cpuName} ${config.cpuLimit}チップ ${config.cpuDecisionMs}ms / ${chAName} vs ${chBName}`;
+  evoDetail.textContent=`${generations}世代 / CPU ${cpuName} ${config.cpuLimit}チップ ${config.cpuDecisionMs}ms / ${chAName} vs ${chBName}。5世代ごとにValidation checkpointを保存します。`;
   await new Promise(r=>requestAnimationFrame(()=>r()));
 
   try{
@@ -73,8 +85,9 @@ optimizeHybrid=async function(maxGenerations=20){
     const phaseReport={textContent:''};
     const phaseChassisSel={get value(){return config.chassisA;}};
     const seed=__chooseProductionMasterSeed(ref);
-    let src=await fetch('./phase-d4-evolution.js?v=20260824-prod-current-02',{cache:'no-store'}).then(r=>{if(!r.ok)throw new Error('phase-d4-evolution.js '+r.status);return r.text();});
-    src=ref.patchD4Source(src,seed,`${__PRODUCTION_OPTIMIZER_VERSION}-seed-${seed}`);
+    let src=await fetch('./phase-d4-evolution.js?v=20260824-prod-current-03',{cache:'no-store'}).then(r=>{if(!r.ok)throw new Error('phase-d4-evolution.js '+r.status);return r.text();});
+    src=ref.patchD4Source(src,seed,`${__PRODUCTION_OPTIMIZER_VERSION}-${generations}g-seed-${seed}`);
+    src=__patchD4Generations(src,generations);
     src=__patchD4ForCurrentChassis(src,config.chassisA,config.chassisB);
     window.__phaseD4=null;
     eval(src);
@@ -92,11 +105,11 @@ optimizeHybrid=async function(maxGenerations=20){
     if(typeof resetWorld==='function')resetWorld();
     renderProgram();
 
-    evoGen.textContent=`20 / 20 (選択 ${report.selectedCheckpoint.generation})`;
+    evoGen.textContent=`${generations} / ${generations} (選択 ${report.selectedCheckpoint.generation})`;
     evoBattles.textContent=String(report.counters?.battles||0);
     evoBest.textContent=((val?.winRate||0)*100).toFixed(1)+'%';evoProgress.style.width='100%';
-    evoDetail.textContent=`完了：Validation ${(100*(val?.winRate||0)).toFixed(1)}% / Test ${(100*(test?.winRate||0)).toFixed(1)}% / Damage ${(test?.avgDamage||0).toFixed(2)} / ${snap.weapons.join(' + ')} / checkpoint ${snap.hash} / seed ${seed} / CPU ${cpuName} ${config.cpuLimit}チップ ${config.cpuDecisionMs}ms / ${chAName} vs ${chBName}`;
-    statusEl.textContent='強さ優先探索完了。現在選択中のCPU・自機・敵機条件で選んだcheckpointを自機へ適用しました。';
+    evoDetail.textContent=`完了：${generations}世代 / 選択checkpoint ${report.selectedCheckpoint.generation} / Validation ${(100*(val?.winRate||0)).toFixed(1)}% / Test ${(100*(test?.winRate||0)).toFixed(1)}% / Damage ${(test?.avgDamage||0).toFixed(2)} / ${snap.weapons.join(' + ')} / checkpoint ${snap.hash} / seed ${seed} / CPU ${cpuName} ${config.cpuLimit}チップ ${config.cpuDecisionMs}ms / ${chAName} vs ${chBName}`;
+    statusEl.textContent=`強さ優先探索完了。${generations}世代まで探索し、全checkpointからValidation最良個体を自機へ適用しました。`;
 
     const meta={optimizer:__PRODUCTION_OPTIMIZER_VERSION,referenceConfigVersion:ref.VERSION,masterSeed:seed,masterSeedPool:(ref.VALIDATED_MASTER_SEEDS||ref.MASTER_SEEDS||[]).slice(0,3),searchConfig:{...config,generations},selectedGeneration:report.selectedCheckpoint.generation,validationWinRate:val?.winRate||0,testWinRate:test?.winRate||0,testAvgDamage:test?.avgDamage||0,checkpointHash:snap.hash,weapons:snap.weapons.slice(),audit:{invalidToEvaluation:report.counters?.invalidToEvaluation,runtimeHashViolations:report.counters?.runtimeHashViolations,programHashViolations:report.counters?.programHashViolations,eliteHashViolations:report.counters?.eliteHashViolations,checkpointHashViolations:report.counters?.checkpointHashViolations,testEvaluations:report.counters?.testEvaluations}};
     if(typeof saveOptimizedResult==='function')saveOptimizedResult(meta);
@@ -112,8 +125,8 @@ optimizeHybrid=async function(maxGenerations=20){
       renderProgram();
       const appliedHash=__productionProgramHash(programs.A),ok=appliedHash===snap.hash;
       evoDetail.textContent+=` / 反映hash ${appliedHash}${ok?' 一致':' 不一致'}`;
-      statusEl.textContent=ok?'探索結果を自機へ反映しました。6×6盤面・武器設定ともcheckpointと一致しています。':`探索結果の反映hashが不一致です：checkpoint ${snap.hash} / 盤面 ${appliedHash}`;
-      window.__lastProductionInstallCheck={checkpointHash:snap.hash,appliedHash,match:ok,weapons:selectedWeapons.slice()};
+      statusEl.textContent=ok?`探索結果を自機へ反映しました。${generations}世代探索のcheckpointと6×6盤面・武器設定が一致しています。`:`探索結果の反映hashが不一致です：checkpoint ${snap.hash} / 盤面 ${appliedHash}`;
+      window.__lastProductionInstallCheck={checkpointHash:snap.hash,appliedHash,match:ok,weapons:selectedWeapons.slice(),generations};
     },0);
     return report;
   }catch(err){
@@ -123,7 +136,7 @@ optimizeHybrid=async function(maxGenerations=20){
 
 (function __installProductionD4Ui(){
   try{
-    if(typeof maxGenInput!=='undefined'&&maxGenInput){maxGenInput.value='20';maxGenInput.min='20';maxGenInput.max='20';maxGenInput.disabled=true;maxGenInput.title='現在設定で20世代探索';}
-    if(typeof optimizeBtn!=='undefined'&&optimizeBtn){optimizeBtn.textContent='強さ優先探索';optimizeBtn.title='現在選択中のCPU・自機・敵機条件で探索';}
+    if(typeof maxGenInput!=='undefined'&&maxGenInput){maxGenInput.value='20';maxGenInput.min='20';maxGenInput.max='200';maxGenInput.step='5';maxGenInput.disabled=false;maxGenInput.title='20〜200世代、5世代刻みで指定できます';}
+    if(typeof optimizeBtn!=='undefined'&&optimizeBtn){optimizeBtn.textContent='強さ優先探索';optimizeBtn.title='現在選択中のCPU・自機・敵機条件と指定世代数で探索';}
   }catch(e){console.warn('production D4 UI setup failed',e);}
 })();
