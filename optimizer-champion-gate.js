@@ -1,10 +1,10 @@
 // Production optimizer integration: grid-native D4 pipeline generalized to the current game setup.
 // The D5-verified algorithm/baseline definition is kept, while CPU, chassis and generation count come from the UI.
-const __PRODUCTION_OPTIMIZER_VERSION='grid-native-d4-production-v7-variable-generations';
+const __PRODUCTION_OPTIMIZER_VERSION='grid-native-d4-production-v8-generation-ui-result-feedback';
 
 async function __loadOptimizerModule(path,ready){
   if(ready())return;
-  const src=await fetch(path+'?v=20260824-prod-current-03',{cache:'no-store'}).then(r=>{if(!r.ok)throw new Error(path+' '+r.status);return r.text();});
+  const src=await fetch(path+'?v=20260824-prod-current-04',{cache:'no-store'}).then(r=>{if(!r.ok)throw new Error(path+' '+r.status);return r.text();});
   (0,eval)(src);
   if(!ready())throw new Error(path+' initialization failed');
 }
@@ -42,9 +42,6 @@ function __patchD4Generations(src,generations){
   return src.replace(marker,replacement);
 }
 
-// D4 was originally symmetric in chassis. For production, preserve the selected A/B chassis.
-// The reverse-side evaluation temporarily swaps chassis too, so the candidate keeps the A chassis
-// and the opponent keeps the B chassis even when spawn/program sides are reversed for fairness.
 function __patchD4ForCurrentChassis(src,chassisA,chassisB){
   const chassisMarker="const oldCh={A:chassisBySide.A,B:chassisBySide.B};chassisBySide.A=phaseChassisSel.value;chassisBySide.B=phaseChassisSel.value;";
   const chassisReplacement=`const oldCh={A:chassisBySide.A,B:chassisBySide.B};chassisBySide.A=${JSON.stringify(chassisA)};chassisBySide.B=${JSON.stringify(chassisB)};`;
@@ -61,6 +58,7 @@ optimizeHybrid=async function(maxGenerations=20){
   running=false;startBtn.textContent='戦闘開始';optimizeBtn.disabled=true;
   const generations=__normalizeProductionGenerations(maxGenerations);
   const config=__productionConfigSnapshot();
+  const beforeHash=__productionProgramHash(programs.A),beforeWeapons=[weaponA1Sel.value,weaponA2Sel.value];
   if(typeof maxGenInput!=='undefined'&&maxGenInput){maxGenInput.value=String(generations);}
   const cpuName=CPU_CLASSES?.[config.cpuClass]?.name||config.cpuClass;
   const chAName=CHASSIS_TYPES?.[config.chassisA]?.name||config.chassisA;
@@ -85,7 +83,7 @@ optimizeHybrid=async function(maxGenerations=20){
     const phaseReport={textContent:''};
     const phaseChassisSel={get value(){return config.chassisA;}};
     const seed=__chooseProductionMasterSeed(ref);
-    let src=await fetch('./phase-d4-evolution.js?v=20260824-prod-current-03',{cache:'no-store'}).then(r=>{if(!r.ok)throw new Error('phase-d4-evolution.js '+r.status);return r.text();});
+    let src=await fetch('./phase-d4-evolution.js?v=20260824-prod-current-04',{cache:'no-store'}).then(r=>{if(!r.ok)throw new Error('phase-d4-evolution.js '+r.status);return r.text();});
     src=ref.patchD4Source(src,seed,`${__PRODUCTION_OPTIMIZER_VERSION}-${generations}g-seed-${seed}`);
     src=__patchD4Generations(src,generations);
     src=__patchD4ForCurrentChassis(src,config.chassisA,config.chassisB);
@@ -109,14 +107,11 @@ optimizeHybrid=async function(maxGenerations=20){
     evoBattles.textContent=String(report.counters?.battles||0);
     evoBest.textContent=((val?.winRate||0)*100).toFixed(1)+'%';evoProgress.style.width='100%';
     evoDetail.textContent=`完了：${generations}世代 / 選択checkpoint ${report.selectedCheckpoint.generation} / Validation ${(100*(val?.winRate||0)).toFixed(1)}% / Test ${(100*(test?.winRate||0)).toFixed(1)}% / Damage ${(test?.avgDamage||0).toFixed(2)} / ${snap.weapons.join(' + ')} / checkpoint ${snap.hash} / seed ${seed} / CPU ${cpuName} ${config.cpuLimit}チップ ${config.cpuDecisionMs}ms / ${chAName} vs ${chBName}`;
-    statusEl.textContent=`強さ優先探索完了。${generations}世代まで探索し、全checkpointからValidation最良個体を自機へ適用しました。`;
 
     const meta={optimizer:__PRODUCTION_OPTIMIZER_VERSION,referenceConfigVersion:ref.VERSION,masterSeed:seed,masterSeedPool:(ref.VALIDATED_MASTER_SEEDS||ref.MASTER_SEEDS||[]).slice(0,3),searchConfig:{...config,generations},selectedGeneration:report.selectedCheckpoint.generation,validationWinRate:val?.winRate||0,testWinRate:test?.winRate||0,testAvgDamage:test?.avgDamage||0,checkpointHash:snap.hash,weapons:snap.weapons.slice(),audit:{invalidToEvaluation:report.counters?.invalidToEvaluation,runtimeHashViolations:report.counters?.runtimeHashViolations,programHashViolations:report.counters?.programHashViolations,eliteHashViolations:report.counters?.eliteHashViolations,checkpointHashViolations:report.counters?.checkpointHashViolations,testEvaluations:report.counters?.testEvaluations}};
     if(typeof saveOptimizedResult==='function')saveOptimizedResult(meta);
     window.__lastProductionD4Report=report;
 
-    // cpu-rules wraps optimizeHybrid after this function is installed. Re-apply the exact selected
-    // checkpoint on the next task so no outer compatibility wrapper can silently replace it.
     setTimeout(()=>{
       programs.A=cloneProgram(selectedProgram);
       weaponA1Sel.value=selectedWeapons[0];weaponA2Sel.value=selectedWeapons[1];
@@ -124,9 +119,10 @@ optimizeHybrid=async function(maxGenerations=20){
       if(state?.A){state.A.pc=0;state.A.acc=0;}
       renderProgram();
       const appliedHash=__productionProgramHash(programs.A),ok=appliedHash===snap.hash;
-      evoDetail.textContent+=` / 反映hash ${appliedHash}${ok?' 一致':' 不一致'}`;
-      statusEl.textContent=ok?`探索結果を自機へ反映しました。${generations}世代探索のcheckpointと6×6盤面・武器設定が一致しています。`:`探索結果の反映hashが不一致です：checkpoint ${snap.hash} / 盤面 ${appliedHash}`;
-      window.__lastProductionInstallCheck={checkpointHash:snap.hash,appliedHash,match:ok,weapons:selectedWeapons.slice(),generations};
+      const changed=beforeHash!==appliedHash||JSON.stringify(beforeWeapons)!==JSON.stringify(selectedWeapons);
+      evoDetail.textContent+=` / 反映hash ${appliedHash}${ok?' 一致':' 不一致'} / ${changed?'盤面更新あり':'同一結果を再選出'}`;
+      statusEl.textContent=ok?(changed?`探索結果を自機へ反映しました。盤面が ${beforeHash} → ${appliedHash} に更新されました。`:`探索結果は正しく反映済みです。今回は探索前と同じcheckpoint ${appliedHash} が再選出されたため、盤面の見た目は変わりません。`):`探索結果の反映hashが不一致です：checkpoint ${snap.hash} / 盤面 ${appliedHash}`;
+      window.__lastProductionInstallCheck={checkpointHash:snap.hash,appliedHash,match:ok,changed,beforeHash,weapons:selectedWeapons.slice(),generations};
     },0);
     return report;
   }catch(err){
@@ -136,7 +132,14 @@ optimizeHybrid=async function(maxGenerations=20){
 
 (function __installProductionD4Ui(){
   try{
-    if(typeof maxGenInput!=='undefined'&&maxGenInput){maxGenInput.value='20';maxGenInput.min='20';maxGenInput.max='200';maxGenInput.step='5';maxGenInput.disabled=false;maxGenInput.title='20〜200世代、5世代刻みで指定できます';}
+    if(typeof maxGenInput!=='undefined'&&maxGenInput){
+      maxGenInput.value='20';maxGenInput.min='20';maxGenInput.max='200';maxGenInput.step='5';maxGenInput.disabled=false;maxGenInput.readOnly=false;maxGenInput.title='20〜200世代、5世代刻みで指定できます';
+      const label=maxGenInput.closest('label');
+      if(label&&!root.querySelector('#generationQuickSelect')){
+        const wrap=document.createElement('div');wrap.id='generationQuickSelect';wrap.style.cssText='display:flex;gap:6px;flex-wrap:wrap;margin-top:6px';
+        for(const g of [20,50,100,200]){const b=document.createElement('button');b.type='button';b.textContent=g+'世代';b.style.minHeight='34px';b.style.padding='5px 9px';b.addEventListener('click',()=>{maxGenInput.value=String(g);statusEl.textContent=`最大世代を${g}に設定しました。`;});wrap.appendChild(b);}label.parentNode.appendChild(wrap);
+      }
+    }
     if(typeof optimizeBtn!=='undefined'&&optimizeBtn){optimizeBtn.textContent='強さ優先探索';optimizeBtn.title='現在選択中のCPU・自機・敵機条件と指定世代数で探索';}
   }catch(e){console.warn('production D4 UI setup failed',e);}
 })();
