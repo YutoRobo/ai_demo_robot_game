@@ -100,3 +100,42 @@
 
   window.__structuralEvolution={VERSION,cfg,structureHealth,pruneUnreachable,mutateStructured,crossoverSubgraph,insertActionRepack,removeActionRepack,collapseCondition,runSuite};
 })();
+
+// Board-edge restart rule and restart-edge mutation.
+// Game specification: a flow arrow leaving the 6x6 board returns execution to START.
+(function installBoardExitRestart(){
+  const oldNextCell=nextCell;
+  nextCell=function(index,dir){
+    const x=index%6,y=Math.floor(index/6);
+    if(dir==='U')return y>0?index-6:0;
+    if(dir==='D')return y<5?index+6:0;
+    if(dir==='L')return x>0?index-1:0;
+    if(dir==='R')return x<5?index+1:0;
+    return oldNextCell(index,dir);
+  };
+  nextCell.__boardExitReturnsStart=true;
+
+  const E=window.__structuralEvolution;
+  if(!E||E.__restartEdgePatched)return;
+  const baseMutate=E.mutateStructured;
+  const clone=p=>cloneProgram(p);
+  const outwardDirs=i=>{const x=i%6,y=Math.floor(i/6),a=[];if(y===0)a.push('U');if(y===5)a.push('D');if(x===0)a.push('L');if(x===5)a.push('R');return a;};
+  function reachable(p){const seen=new Set([0]),q=[0];while(q.length){const i=q.shift(),c=i===0?{kind:'action',next:'R'}:p[i];if(!c)continue;const ns=c.kind==='action'?[nextCell(i,c.next)]:[nextCell(i,c.yes),nextCell(i,c.no)];for(const j of ns){if(j===0)continue;if(j>0&&j<36&&p[j]&&!seen.has(j)){seen.add(j);q.push(j);}}}return seen;}
+  function restartEdge(p,rng=Math.random){
+    const ids=[...reachable(p)].filter(i=>i>0&&p[i]&&outwardDirs(i).length);
+    for(let tries=0;tries<Math.min(20,ids.length*3);tries++){
+      const i=ids[Math.floor(rng()*ids.length)],c=p[i],outs=outwardDirs(i),field=c.kind==='action'?'next':(rng()<.5?'yes':'no'),dir=outs[Math.floor(rng()*outs.length)];
+      const n=clone(p);n[i]={...n[i],[field]:dir};
+      const q=E.pruneUnreachable(n),h=E.structureHealth(q);
+      if(h.valid)return{program:q,operator:'restartEdge',retries:0,detail:{index:i,field,dir},health:h};
+    }
+    return null;
+  }
+  E.restartEdge=restartEdge;
+  E.mutateStructured=function(p,rng=Math.random){
+    if(rng()<.12){const r=restartEdge(p,rng);if(r)return r;}
+    return baseMutate(p,rng);
+  };
+  E.__restartEdgePatched='board-exit-start-v1';
+  window.__boardExitRestartVersion='board-exit-start-v1';
+})();
